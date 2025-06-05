@@ -1,2 +1,14 @@
 {
+  "PlayletPolishScrape": {
+    "name": "短剧整理刮削",
+    "description": "监控目录，整理短剧，刮削短剧",
+    "labels": "文件整理, 刮削",
+    "version": "1.0",
+    "icon": "Amule_B.png",
+    "author": "hyuan280",
+    "level": 1,
+    "history": {
+      "v1.0": "短剧整理和刮削"
+    }
+  }
 }
