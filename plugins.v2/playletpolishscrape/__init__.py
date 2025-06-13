@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -806,6 +806,7 @@ class PlayletPolishScrape(_PluginBase):
             "enabled": self._enabled,
             "exclude_keywords": self._exclude_keywords,
             "transfer_type": self._transfer_type,
+            "searchsites": self._searchsites,
             "onlyonce": self._onlyonce,
             "interval": self._interval,
             "notify": self._notify,
