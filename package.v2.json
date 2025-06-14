@@ -3,11 +3,12 @@
     "name": "短剧整理刮削",
     "description": "监控目录，整理短剧，刮削短剧",
     "labels": "文件整理, 刮削",
-    "version": "1.1",
+    "version": "1.2",
     "icon": "Amule_B.png",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.2": "兼容ptskit站点短剧命名风格",
       "v1.1": "修复选择的站点被清空的问题",
       "v1.0": "短剧整理和刮削"
     }

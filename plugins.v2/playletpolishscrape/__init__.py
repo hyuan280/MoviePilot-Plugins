@@ -30,7 +30,7 @@ from app.helper.directory import DirectoryHelper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import TransferInfo, TransferDirectoryConf
-from app.schemas.types import NotificationType, MediaType
+from app.schemas.types import NotificationType, MediaType, StorageSchema
 from app.utils.common import retry
 from app.utils.dom import DomUtils
 from app.utils.http import RequestUtils
@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -83,6 +83,7 @@ class PlayletPolishScrape(_PluginBase):
     _onlyonce = False
     _exclude_keywords = ""
     _transfer_type = "link"
+    _storage_type = StorageSchema.Local.value
     _observer = []
     _timeline = "00:00:10"
     _dirconf = {}
@@ -102,6 +103,8 @@ class PlayletPolishScrape(_PluginBase):
         # 清空配置
         self._dirconf = {}
         self._coverconf = {}
+        self._site_infos = []
+        #self._site_cache = {}
         self.tmdbchain = TmdbChain()
 
         if config:
@@ -113,6 +116,7 @@ class PlayletPolishScrape(_PluginBase):
             self._monitor_confs = config.get("monitor_confs")
             self._exclude_keywords = config.get("exclude_keywords") or ""
             self._transfer_type = config.get("transfer_type") or "link"
+            self._storage_type = config.get("storage_type") or StorageSchema.Local.value
 
         # 停止现有任务
         self.stop_service()
@@ -261,6 +265,53 @@ class PlayletPolishScrape(_PluginBase):
                            event_path=event_path,
                            source_dir=source_dir)
 
+    def __meta_complement(self, is_directory: bool, media_path: str):
+        file_meta = MetaInfoPath(Path(media_path))
+        if re.search(r'^[0-9]+$', file_meta.org_string):
+            if is_directory:
+                logger.warn(f"单独的数字目录，不处理：{media_path}")
+                return None
+            tv_name = Path(media_path).parent.name
+            tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
+            tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
+            tv_name = re.sub(r'＆', '&', tv_name)
+            match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
+            if match:
+                title = match.group(1).strip().split('(')[0]
+                try:
+                    episodes = int(match.group(2))
+                except:
+                    episodes = 0
+                actors = match.group(3)
+                if actors:
+                    actors = actors.replace('/', ' ').strip()
+                    if '&' in actors:
+                        actor_list = actors.split('&')
+                    else:
+                        actor_list = [actor.strip() for actor in actors.split() if len(actor) <= 4]
+                else:
+                    actor_list = []
+            else:
+                title = tv_name.split('(')[0]
+                episodes = 0
+                actor_list = []
+
+            if actor_list:
+                actors = ' '.join(actor_list)
+                subtitle = f"{title} | 演员：{actors}"
+            else:
+                subtitle = tv_name
+
+            file_meta.org_string = title
+            file_meta.subtitle = subtitle
+            file_meta.cn_name = title
+            file_meta.name = title
+            file_meta.begin_season = 1
+            file_meta.total_season = 1
+            file_meta.total_episode = episodes
+            file_meta.en_name = None
+        return file_meta
+
     def __handle_file(self, is_directory: bool, event_path: str, source_dir: str):
         """
         同步一个文件
@@ -272,8 +323,9 @@ class PlayletPolishScrape(_PluginBase):
             # 转移路径
             dest_dir = self._dirconf.get(source_dir)
             # 元数据
-            file_meta = MetaInfoPath(Path(event_path))
-            meta_dict = file_meta.to_dict()
+            file_meta = self.__meta_complement(is_directory, event_path)
+            if not file_meta:
+                return
             if not file_meta.name:
                 logger.error(f"{Path(event_path).name} 无法识别有效信息")
                 return
@@ -304,7 +356,7 @@ class PlayletPolishScrape(_PluginBase):
                     target_dir.renaming = True
                     target_dir.notify = False
                     target_dir.overwrite_mode = 'never'
-                    target_dir.library_storage = "local"
+                    target_dir.library_storage = self._storage_type
                 else:
                     target_dir.transfer_type = self._transfer_type
 
@@ -321,8 +373,12 @@ class PlayletPolishScrape(_PluginBase):
                 else:
                     episodes_info = None
 
-                # 转移
-                fileitem = StorageChain().get_file_item("local", Path(event_path))
+                # 整理
+                fileitem = StorageChain().get_file_item(self._storage_type, Path(event_path))
+                logger.debug(f"fileitem：{fileitem}")
+                if '&' in event_path:
+                    fileitem.path = fileitem.path.replace('/&', '\&')
+                    logger.info(f"路径：{fileitem.path}")
                 transferinfo: TransferInfo = self.chain.transfer(mediainfo=mediainfo,
                                                                 fileitem=fileitem,
                                                                 target_directory=target_dir,
@@ -335,15 +391,20 @@ class PlayletPolishScrape(_PluginBase):
                 #                                                 meta=file_meta,
                 #                                                 episodes_info=episodes_info)
                 if not transferinfo:
-                    logger.error("文件转移模块运行失败")
+                    logger.error("文件转移模块运行错误")
+                    return
+                if not transferinfo.success:
+                    logger.warn(transferinfo.message)
+                    return
 
             except Exception as e:
                 print(str(e))
-                logger.error(f"{event_path} tmdb刮削失败")
+                logger.error(f"{event_path} 刮削失败, 请重新配置运行插件")
+                self.stop_service()
+                return
+
             if tdmb_flag:
-                self.chain.scrape_metadata(fileitem=transferinfo.target_diritem,
-                                                meta=file_meta,
-                                                mediainfo=mediainfo)
+                self.chain.scrape_metadata(fileitem=transferinfo.target_diritem, meta=file_meta, mediainfo=mediainfo)
             else:
                 self._site_scrape_metadata(transferinfo, mediainfo=mediainfo)
 
@@ -377,57 +438,86 @@ class PlayletPolishScrape(_PluginBase):
             logger.error(f"event_handler_created error: {e}")
             print(str(e))
 
+    def _site_comparison_meta(self, name, tv_name):
+        tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
+        tv_name = re.sub(r'＆', '&', tv_name)
+        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
+        if match:
+            title = match.group(1).strip().split('(')[0]
+            if name == title:
+                return True
+
+        return False
+
+    def _site_meta_update(self, meta, info):
+        info['org_string'] = meta.org_string
+        info['cn_name'] = meta.cn_name
+        info['name'] = meta.name
+        info['subtitle'] = meta.subtitle
+        info['begin_season'] = meta.begin_season
+        info['total_season'] = meta.total_season
+        info['total_episode'] = meta.total_episode
+        info['season_episode'] = "S01"
+
     def _site_get_context(self, meta):
-        site_contests = []
+        site_contexts = []
 
         torrents = SearchChain().last_search_results()
         if torrents:
             for torrent in torrents:
                 _context = torrent.to_dict()
                 if meta.name == _context.get('meta_info').get('en_name') or meta.name == _context.get('meta_info').get('cn_name'):
-                    site_contests.append(_context)
-        if len(site_contests) == 0:
+                    site_contexts.append(_context)
+                else:
+                    if self._site_comparison_meta(meta.name, _context.get('meta_info').get('org_string')):
+                        self._site_meta_update(meta, _context.get('meta_info'))
+                        site_contexts.append(_context)
+        if len(site_contexts) == 0:
             torrents = SearchChain().search_by_title(title=meta.name, sites=self._searchsites, cache_local=True)
             if torrents:
                 for torrent in torrents:
                     _context = torrent.to_dict()
                     if meta.name == _context.get('meta_info').get('en_name') or meta.name == _context.get('meta_info').get('cn_name'):
-                        site_contests.append(_context)
+                        site_contexts.append(_context)
+                    else:
+                        if self._site_comparison_meta(meta.name, _context.get('meta_info').get('org_string')):
+                            self._site_meta_update(meta, _context.get('meta_info'))
+                            site_contexts.append(_context)
 
-        site_contests_year = []
-        if len(site_contests) == 0:
+        site_contexts_year = []
+        if len(site_contexts) == 0:
             return {}
-        elif len(site_contests) == 1:
-            return site_contests[0]
+        elif len(site_contexts) == 1:
+            return site_contexts[0]
         else:
-            for _m in site_contests:
+            for _m in site_contexts:
                 if meta.year == _m.get('meta_info').get('year'):
-                    site_contests_year.append(_m)
+                    site_contexts_year.append(_m)
 
-        site_contests_edition = []
-        if len(site_contests_year) == 0:
-            return site_contests[0]
-        elif len(site_contests_year) == 1:
-            return site_contests_year[0]
+        site_contexts_edition = []
+        if len(site_contexts_year) == 0:
+            return site_contexts[0]
+        elif len(site_contexts_year) == 1:
+            return site_contexts_year[0]
         else:
-            for _m in site_contests_year:
+            for _m in site_contexts_year:
                 if meta.edition == _m.get('meta_info').get('edition'):
-                    site_contests_edition.append(_m)
+                    site_contexts_edition.append(_m)
 
-        site_contests_season = []
-        if len(site_contests_edition) == 0:
-            return site_contests_year[0]
-        elif len(site_contests_edition) == 1:
-            return site_contests_edition[0]
+        site_contexts_season = []
+        if len(site_contexts_edition) == 0:
+            return site_contexts_year[0]
+        elif len(site_contexts_edition) == 1:
+            return site_contexts_edition[0]
         else:
-            for _m in site_contests_edition:
+            for _m in site_contexts_edition:
                 if meta.is_in_season(_m.get('meta_info').get('season_episode')):
-                    site_contests_season.append(_m)
+                    site_contexts_season.append(_m)
 
-        if len(site_contests_edition) == 0:
-            return site_contests_edition[0]
+        if len(site_contexts_edition) == 0:
+            return site_contexts_edition[0]
         else:
-            return site_contests_season[0]
+            return site_contexts_season[0]
 
     def _site_brief_text(self, torrent):
         site = SiteOper().get(torrent.get('site'))
@@ -446,10 +536,11 @@ class PlayletPolishScrape(_PluginBase):
         return html
 
     def _sites_recognize_media(self, meta):
-        contest = self._site_get_context(meta)
-        if not contest:
+        context = self._site_get_context(meta)
+        if not context:
             return None
-        html = self._site_brief_text(contest.get('torrent_info'))
+
+        html = self._site_brief_text(context.get('torrent_info'))
         brief_texts = html.xpath("//td[contains(@class, 'rowfollow')]/div[@id='kdescr']")
         if not brief_texts:
             return None
@@ -457,7 +548,7 @@ class PlayletPolishScrape(_PluginBase):
         img_url = None
         images = brief_texts[0].xpath(".//img[1]/@src")
         if not images:
-            logger.error(f"未获取到种子封面图 {contest.get('torrent_info').get("page_url")}")
+            logger.error(f"未获取到种子封面图 {context.get('torrent_info').get("page_url")}")
         else:
             img_url = str(images[0])
         logger.info(f"获取到种子封面图 {img_url}")
@@ -471,13 +562,26 @@ class PlayletPolishScrape(_PluginBase):
             else:
                 brief = brief_text.strip()
 
-        subtitle = contest.get('meta_info').get('subtitle')
+        subtitle = context.get('meta_info').get('subtitle')
         tags = []
         if '类型' in subtitle:
             subtitle_strs = subtitle.split('|')
             for s in subtitle_strs:
                 if '类型' in s:
                     tags = s.replace('类型', '').replace(':', '').replace('：', '').split()
+        if 'labels' in context.get('torrent_info').keys():
+            for _l in context.get('torrent_info').get('labels'):
+                if '禁转' in _l or '官方' in _l or '短剧' in _l:
+                    pass
+                else:
+                    tags.append(_l)
+
+        actors = []
+        if '演员' in subtitle:
+            subtitle_strs = subtitle.split('|')
+            for s in subtitle_strs:
+                if '演员' in s:
+                    actors = [{ 'name': elem, 'type': 'Actor' } for elem in s.replace('演员', '').replace(':', '').replace('：', '').split()]
 
         logger.info(f"获取tag: {tags}")
         logger.debug(f"简介: {brief}")
@@ -485,20 +589,25 @@ class PlayletPolishScrape(_PluginBase):
         mediainfo = MediaInfo()
         mediainfo.source = 'site'
         mediainfo.type = MediaType.TV
-        mediainfo.title = contest.get('meta_info').get('cn_name')
-        mediainfo.en_title = contest.get('meta_info').get('en_name')
-        mediainfo.year = contest.get('meta_info').get('year')
-        mediainfo.season = int(contest.get('meta_info').get('season_episode').replace('S', ''))
-        mediainfo.original_title = contest.get('meta_info').get('cn_name')
+        mediainfo.title = context.get('meta_info').get('cn_name')
+        mediainfo.en_title = context.get('meta_info').get('en_name')
+        mediainfo.year = context.get('meta_info').get('year')
+        if not mediainfo.year:
+            datetime_object = datetime.datetime.strptime(context.get('torrent_info').get('pubdate'), '%Y-%m-%d %H:%M:%S')
+            mediainfo.year = datetime_object.year
+
+        mediainfo.season = int(context.get('meta_info').get('season_episode').replace('S', ''))
+        mediainfo.original_title = context.get('meta_info').get('cn_name')
         mediainfo.poster_path = img_url
         mediainfo.category = "短剧"
-        mediainfo.number_of_episodes = contest.get('meta_info').get('total_episode')
-        mediainfo.number_of_seasons = contest.get('meta_info').get('total_season')
+        mediainfo.number_of_episodes = context.get('meta_info').get('total_episode')
+        mediainfo.number_of_seasons = context.get('meta_info').get('total_season')
         mediainfo.overview = brief
-        mediainfo.mediaid_prefix = contest.get('torrent_info').get('site_name')
-        mediainfo.media_id = contest.get('torrent_info').get('site')
-        mediainfo.release_date = contest.get('torrent_info').get('pubdate')
+        mediainfo.mediaid_prefix = context.get('torrent_info').get('site_name')
+        mediainfo.media_id = context.get('torrent_info').get('site')
+        mediainfo.release_date = context.get('torrent_info').get('pubdate')
         mediainfo.tagline = tags
+        mediainfo.actors = actors
 
         return mediainfo
 
@@ -531,18 +640,22 @@ class PlayletPolishScrape(_PluginBase):
         ep_path = transferinfo.target_item.path
         se_path = os.path.dirname(ep_path)
         name = transferinfo.target_item.basename
-        match = re.search(r'S(\d{2})E(\d{2})', name)
+        match = re.search(r'S(\d{2})E(\d{2,})', name)
         if match:
             episode = int(match.group(2))
         else:
             episode = -1
 
         if not os.path.exists(f"{tv_path}/tvshow.nfo"):
-            self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline)
+            self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline, mediainfo.actors)
         if not os.path.exists(f"{se_path}/season.nfo"):
-            self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date)
+            self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
         if not os.path.exists(f"{se_path}/{name}.nfo"):
-            self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date)
+            if episode > 0:
+                title = f"第 {episode} 集"
+            else:
+                title = None
+            self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, title=title, date=mediainfo.release_date)
 
         download_path = f"{tv_path}/download.jpg"
         file_path = Path(download_path)
@@ -628,7 +741,7 @@ class PlayletPolishScrape(_PluginBase):
         except Exception as e:
             print(str(e))
 
-    def __gen_tv_nfo_file(self, dir_path: Path, title: str, year: str, plot: str = None, date: str = None, tags: list = []):
+    def __gen_tv_nfo_file(self, dir_path: Path, title: str, year: str, plot: str = None, date: str = None, tags: list = [], actors: dict = None):
         """
         生成电视剧总季的NFO描述文件
         :param dir_path: 电视剧根目录
@@ -657,12 +770,18 @@ class PlayletPolishScrape(_PluginBase):
         if tags:
             for _t in tags:
                 DomUtils.add_node(doc, root, "tag", _t)
+        if actors:
+            actor = DomUtils.add_node(doc, root, "actor")
+            for _a in actors:
+                    DomUtils.add_node(doc, actor, "name", _a.get('name'))
+                    DomUtils.add_node(doc, actor, "type", _a.get('type'))
+
         DomUtils.add_node(doc, root, "season", "-1")
         DomUtils.add_node(doc, root, "episode", "-1")
         # 保存
         self.__save_nfo(doc, dir_path.joinpath("tvshow.nfo"))
 
-    def __gen_se_nfo_file(self, dir_path: Path, season: int, year: str, plot: str = None, date: str = None):
+    def __gen_se_nfo_file(self, dir_path: Path, season: int, year: str, plot: str = None, date: str = None, actors: dict = None):
         """
         生成电视剧季的NFO描述文件
         :param dir_path: 电视剧季目录
@@ -688,6 +807,11 @@ class PlayletPolishScrape(_PluginBase):
         DomUtils.add_node(doc, root, "title", f"第 {season} 季")
         DomUtils.add_node(doc, root, "year", year)
         DomUtils.add_node(doc, root, "seasonnumber", season)
+        if actors:
+            actor = DomUtils.add_node(doc, root, "actor")
+            for _a in actors:
+                    DomUtils.add_node(doc, actor, "name", _a.get('name'))
+                    DomUtils.add_node(doc, actor, "type", _a.get('type'))
         # 保存
         self.__save_nfo(doc, dir_path.joinpath("season.nfo"))
 
@@ -806,6 +930,7 @@ class PlayletPolishScrape(_PluginBase):
             "enabled": self._enabled,
             "exclude_keywords": self._exclude_keywords,
             "transfer_type": self._transfer_type,
+            "storage_type": self._storage_type,
             "searchsites": self._searchsites,
             "onlyonce": self._onlyonce,
             "interval": self._interval,
@@ -830,6 +955,7 @@ class PlayletPolishScrape(_PluginBase):
         # 站点选项
         site_options = [{"title": site.get("name"), "value": site.get("id")}
                         for site in SitesHelper().get_indexers()]
+        storage_list = [{'title': storage.name, 'value': storage.value} for storage in StorageSchema]
         return [
             {
                 'component': 'VForm',
@@ -918,7 +1044,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 5
                                 },
                                 'content': [
                                     {
@@ -940,7 +1066,24 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 5
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSelect',
+                                        'props': {
+                                            'model': 'storage_type',
+                                            'label': '存储类型',
+                                            'items': storage_list
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 2
                                 },
                                 'content': [
                                     {
@@ -1050,7 +1193,8 @@ class PlayletPolishScrape(_PluginBase):
             "interval": 10,
             "monitor_confs": "",
             "exclude_keywords": "",
-            "transfer_type": "link"
+            "transfer_type": "link",
+            "storage_type": "local"
         }
 
     def get_page(self) -> List[dict]:
