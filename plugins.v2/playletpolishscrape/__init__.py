@@ -16,13 +16,11 @@ from requests import RequestException
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.polling import PollingObserver
-from app.helper.sites import SitesHelper, SiteSpider
+from app.helper.sites import SitesHelper
 
-from app.chain.tmdb import TmdbChain
 from app.chain.search import SearchChain
 from app.chain.storage import StorageChain
 from app.core.config import settings
-from app.core.meta.words import WordsMatcher
 from app.core.metainfo import MetaInfoPath
 from app.core.context import MediaInfo
 from app.db.site_oper import SiteOper
@@ -65,7 +63,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -88,13 +86,13 @@ class PlayletPolishScrape(_PluginBase):
     _timeline = "00:00:10"
     _dirconf = {}
     _coverconf = {}
-    tmdbchain = None
     _interval = 10
     _notify = False
     _medias = {}
     _searchsites = []
     _site_infos = []
     _site_cache = {}
+    _img_cache = {}
 
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
@@ -105,7 +103,7 @@ class PlayletPolishScrape(_PluginBase):
         self._coverconf = {}
         self._site_infos = []
         #self._site_cache = {}
-        self.tmdbchain = TmdbChain()
+        self._img_cache = {}
 
         if config:
             self._enabled = config.get("enabled")
@@ -242,9 +240,8 @@ class PlayletPolishScrape(_PluginBase):
         # 回收站及隐藏的文件不处理
         if (event_path.find("/@Recycle") != -1
                 or event_path.find("/#recycle") != -1
-                or event_path.find("/.") != -1
                 or event_path.find("/@eaDir") != -1):
-            logger.info(f"{event_path} 是回收站或隐藏的文件，跳过处理")
+            logger.info(f"{event_path} 是回收站的文件，跳过处理")
             return
 
         # 命中过滤关键字不处理
@@ -265,43 +262,57 @@ class PlayletPolishScrape(_PluginBase):
                            event_path=event_path,
                            source_dir=source_dir)
 
-    def __meta_complement(self, is_directory: bool, media_path: str):
-        file_meta = MetaInfoPath(Path(media_path))
-        if re.search(r'^[0-9]+$', file_meta.org_string):
-            if is_directory:
-                logger.warn(f"单独的数字目录，不处理：{media_path}")
-                return None
-            tv_name = Path(media_path).parent.name
-            tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
-            tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
-            tv_name = re.sub(r'＆', '&', tv_name)
-            match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
-            if match:
-                title = match.group(1).strip().split('(')[0]
-                try:
-                    episodes = int(match.group(2))
-                except:
-                    episodes = 0
-                actors = match.group(3)
-                if actors:
-                    actors = actors.replace('/', ' ').strip()
-                    if '&' in actors:
-                        actor_list = actors.split('&')
-                    else:
-                        actor_list = [actor.strip() for actor in actors.split() if len(actor) <= 4]
-                else:
-                    actor_list = []
-            else:
-                title = tv_name.split('(')[0]
+    def __meta_search_tv_name(self, file_meta: MetaInfoPath, tv_name: str, is_compilations: bool = False):
+        tv_name = tv_name.strip('.')
+        tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
+        tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
+        tv_name = re.sub(r'＆', '&', tv_name)
+        logger.info(f"尝试识别媒体信息：{tv_name}")
+        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
+        if match:
+            title = match.group(1).strip().split('(')[0]
+            try:
+                episodes = int(match.group(2))
+            except:
                 episodes = 0
-                actor_list = []
-
-            if actor_list:
-                actors = ' '.join(actor_list)
-                subtitle = f"{title} | 演员：{actors}"
+            actors = match.group(3)
+            if actors and not '剧' in actors:
+                actors = actors.replace('/', ' ').strip()
+                if '&' in actors:
+                    actor_list = actors.split('&')
+                else:
+                    actor_list = [actor.strip() for actor in actors.split() if len(actor) <= 4]
             else:
-                subtitle = tv_name
+                actor_list = []
+        else:
+            title = tv_name.split('(')[0]
+            episodes = 0
+            actor_list = []
 
+        if '-' in file_meta.org_string:
+            ep_match = re.search(r'(\d+)-(\d+)', file_meta.org_string)
+            logger.info(f"从文件名中提取集数：{ep_match}")
+            if ep_match:
+                file_meta.begin_episode = int(ep_match.group(1))
+                file_meta.end_episode = int(ep_match.group(2))
+
+        if actor_list:
+            actors = ' '.join(actor_list)
+            subtitle = f"{title} | 演员：{actors}"
+        else:
+            subtitle = tv_name
+
+        if is_compilations:
+            file_meta.org_string = title
+            file_meta.subtitle = subtitle
+            file_meta.cn_name = title
+            file_meta.name = title
+            file_meta.begin_season = 0
+            file_meta.total_season = 1
+            file_meta.total_episode = 1
+            file_meta.begin_episode = 1
+            file_meta.en_name = None
+        else:
             file_meta.org_string = title
             file_meta.subtitle = subtitle
             file_meta.cn_name = title
@@ -310,6 +321,30 @@ class PlayletPolishScrape(_PluginBase):
             file_meta.total_season = 1
             file_meta.total_episode = episodes
             file_meta.en_name = None
+        return file_meta
+
+    def __meta_complement(self, is_directory: bool, media_path: str):
+        _path = Path(media_path)
+        file_meta = MetaInfoPath(_path)
+        if _path.parent.name in ['合集', '长篇']:
+            logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
+            parent_dir = _path.parent
+            is_tv = False
+            for file in parent_dir.iterdir():
+                if file.suffix.lower() in settings.RMT_MEDIAEXT:
+                    is_tv = True
+                    break
+            if not is_tv:
+                logger.info(f"父目录不是电视剧目录，不处理：{media_path}")
+                return None
+            tv_name = parent_dir.parent.name
+            file_meta = self.__meta_search_tv_name(file_meta, tv_name, True)
+        elif re.search(r'^\d+(-\d+)?[集话]?$', file_meta.org_string):
+            if is_directory:
+                logger.warn(f"单独的数字目录，不处理：{media_path}")
+                return None
+            tv_name = Path(media_path).parent.name
+            file_meta = self.__meta_search_tv_name(file_meta, tv_name)
         return file_meta
 
     def __handle_file(self, is_directory: bool, event_path: str, source_dir: str):
@@ -326,26 +361,29 @@ class PlayletPolishScrape(_PluginBase):
             file_meta = self.__meta_complement(is_directory, event_path)
             if not file_meta:
                 return
+            metadict = file_meta.to_dict()
+            logger.debug(f"元数据：{metadict}")
             if not file_meta.name:
                 logger.error(f"{Path(event_path).name} 无法识别有效信息")
                 return
-            # TDMB识别媒体信息
-            mediainfo: MediaInfo = self.chain.recognize_media(meta=file_meta)
-            tdmb_flag = True
-            if not mediainfo:
-                tdmb_flag = False
-                # 从选择的站点识别媒体信息
-                if file_meta.name in self._site_cache.keys():
-                    mediainfo = self._site_cache.get(file_meta.name)
-                else:
-                    mediainfo = self._sites_recognize_media(file_meta)
-                    if mediainfo:
-                        self._site_cache[file_meta.name] = mediainfo
+
+            # 从选择的站点识别媒体信息
+            if file_meta.name in self._site_cache.keys():
+                mediainfo = self._site_cache.get(file_meta.name)
+            else:
+                logger.info(f"从选择的站点 {self._searchsites} 识别媒体信息")
+                mediainfo = self._sites_recognize_media(file_meta)
+                if mediainfo:
+                    self._site_cache[file_meta.name] = mediainfo
 
             if not mediainfo:
-                logger.error(f"TMDB和选择的站点未查找到媒体信息")
+                logger.error(f"选择的站点未查找到媒体信息")
                 return
 
+            # 短剧合集放在特殊季
+            if file_meta.begin_season == 0:
+                mediainfo.season = 0
+            logger.debug(f"媒体信息：{mediainfo}")
             try:
                 # 查询转移目的目录
                 target_dir = DirectoryHelper().get_dir(mediainfo, src_path=Path(source_dir))
@@ -364,32 +402,18 @@ class PlayletPolishScrape(_PluginBase):
                     logger.error(f"未配置监控目录 {source_dir} 的目的目录")
                     return
 
-                if tdmb_flag:
-                    # 更新媒体图片
-                    self.chain.obtain_images(mediainfo=mediainfo)
-                    mediainfo.category = ""
-                    episodes_info = self.tmdbchain.tmdb_episodes(tmdbid=mediainfo.tmdb_id,
-                                                                    season=file_meta.begin_season or 1)
-                else:
-                    episodes_info = None
-
                 # 整理
                 fileitem = StorageChain().get_file_item(self._storage_type, Path(event_path))
                 logger.debug(f"fileitem：{fileitem}")
                 if '&' in event_path:
                     fileitem.path = fileitem.path.replace('/&', '\&')
                     logger.info(f"路径：{fileitem.path}")
+                _end_episode = file_meta.end_episode # 传输会将end_episode清空，先保存
                 transferinfo: TransferInfo = self.chain.transfer(mediainfo=mediainfo,
                                                                 fileitem=fileitem,
                                                                 target_directory=target_dir,
-                                                                meta=file_meta,
-                                                                episodes_info=episodes_info)
-
-                #transferinfo: TransferInfo = self.chain.transfer(mediainfo=mediainfo,
-                #                                                 path=Path(event_path),
-                #                                                 target=Path(dest_dir),
-                #                                                 meta=file_meta,
-                #                                                 episodes_info=episodes_info)
+                                                                meta=file_meta)
+                file_meta.end_episode = _end_episode
                 if not transferinfo:
                     logger.error("文件转移模块运行错误")
                     return
@@ -403,10 +427,7 @@ class PlayletPolishScrape(_PluginBase):
                 self.stop_service()
                 return
 
-            if tdmb_flag:
-                self.chain.scrape_metadata(fileitem=transferinfo.target_diritem, meta=file_meta, mediainfo=mediainfo)
-            else:
-                self._site_scrape_metadata(transferinfo, mediainfo=mediainfo)
+            self._site_scrape_metadata(file_meta, transferinfo, mediainfo=mediainfo)
 
             # 广播事件
             # self.eventmanager.send_event(EventType.TransferComplete, {
@@ -571,7 +592,7 @@ class PlayletPolishScrape(_PluginBase):
                     tags = s.replace('类型', '').replace(':', '').replace('：', '').split()
         if 'labels' in context.get('torrent_info').keys():
             for _l in context.get('torrent_info').get('labels'):
-                if '禁转' in _l or '官方' in _l or '短剧' in _l:
+                if '禁转' in _l or '官方' in _l or '短剧' in _l or re.search(r'\d+[月天时分]', _l):
                     pass
                 else:
                     tags.append(_l)
@@ -625,6 +646,7 @@ class PlayletPolishScrape(_PluginBase):
             logger.debug(f"保存风景图片：{landscape_path}")
             self.__save_poster(input_path=thumb_path, poster_path=landscape_path, cover_conf="16:9")
         poster_path = f"{transferinfo.target_diritem.path}season{season:02d}-poster.jpg"
+        logger.info(f"季的图片: {poster_path}")
         if not os.path.exists(poster_path):
             logger.debug(f"保存海报图片：{poster_path}")
             self.__save_poster(input_path=thumb_path, poster_path=poster_path, cover_conf="2:3")
@@ -635,7 +657,7 @@ class PlayletPolishScrape(_PluginBase):
             logger.debug(f"保存每集图片：{episode_thumb_path}")
             self.get_thumb(episode_video_path, episode_thumb_path)
 
-    def _site_scrape_metadata(self, transferinfo, mediainfo):
+    def _site_scrape_metadata(self, file_meta, transferinfo, mediainfo):
         tv_path = transferinfo.target_diritem.path
         ep_path = transferinfo.target_item.path
         se_path = os.path.dirname(ep_path)
@@ -651,11 +673,7 @@ class PlayletPolishScrape(_PluginBase):
         if not os.path.exists(f"{se_path}/season.nfo"):
             self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
         if not os.path.exists(f"{se_path}/{name}.nfo"):
-            if episode > 0:
-                title = f"第 {episode} 集"
-            else:
-                title = None
-            self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, title=title, date=mediainfo.release_date)
+            self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date, end_episode=file_meta.end_episode)
 
         download_path = f"{tv_path}/download.jpg"
         file_path = Path(download_path)
@@ -815,7 +833,7 @@ class PlayletPolishScrape(_PluginBase):
         # 保存
         self.__save_nfo(doc, dir_path.joinpath("season.nfo"))
 
-    def __gen_ep_nfo_file(self, dir_path: Path, name: str, season: int, episode: int, year: str, title:str = None, plot: str = None, date: str = None):
+    def __gen_ep_nfo_file(self, dir_path: Path, name: str, season: int, episode: int, year: str, plot: str = None, date: str = None, end_episode: int = None):
         """
         生成电视剧集的NFO描述文件
         :param dir_path: 电视剧集目录
@@ -834,10 +852,13 @@ class PlayletPolishScrape(_PluginBase):
         #日期
         if date:
             DomUtils.add_node(doc, root, "aired", date)
-        # 标题
         DomUtils.add_node(doc, root, "dateadded", formatted_time)
-        if title:
-            DomUtils.add_node(doc, root, "title", title)
+        # 标题
+
+        if end_episode:
+            DomUtils.add_node(doc, root, "title", f"第 {episode}-{end_episode} 集")
+        else:
+            DomUtils.add_node(doc, root, "title", f"第 {episode} 集")
         DomUtils.add_node(doc, root, "year", year)
         DomUtils.add_node(doc, root, "season", season)
         DomUtils.add_node(doc, root, "episode", episode)
@@ -857,20 +878,30 @@ class PlayletPolishScrape(_PluginBase):
         """
         下载图片并保存
         """
+        if url in self._img_cache.keys():
+            if self._img_cache.get(url) > 10:
+                logger.info(f"图片下载失败次数超过10次：{url}")
+                return False
+        else:
+            self._img_cache[url] = 0
+
         try:
             logger.info(f"正在下载{file_path.stem}图片：{url} ...")
             r = RequestUtils().get_res(url=url, raise_exception=True)
             if r:
                 file_path.write_bytes(r.content)
                 logger.info(f"图片已保存：{file_path}")
+                self._img_cache[url] = 0
                 return True
             else:
                 logger.info(f"{file_path.stem}图片下载失败，请检查网络连通性")
+                self._img_cache[url] = self._img_cache.get(url) + 1
                 return False
         except RequestException as err:
             raise err
         except Exception as err:
             logger.error(f"{file_path.stem}图片下载失败：{str(err)}")
+            self._img_cache[url] = self._img_cache.get(url) + 1
             return False
 
     def __get_page_source(self, url: str, site):
