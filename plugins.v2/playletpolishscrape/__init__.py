@@ -63,7 +63,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.3.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -467,7 +467,8 @@ class PlayletPolishScrape(_PluginBase):
             title = match.group(1).strip().split('(')[0]
             if name == title:
                 return True
-
+            elif len(name) > 6 and name in title:
+                    return True
         return False
 
     def _site_meta_update(self, meta, info):
@@ -498,6 +499,7 @@ class PlayletPolishScrape(_PluginBase):
             if torrents:
                 for torrent in torrents:
                     _context = torrent.to_dict()
+                    logger.debug(f"context: {_context}")
                     if meta.name == _context.get('meta_info').get('en_name') or meta.name == _context.get('meta_info').get('cn_name'):
                         site_contexts.append(_context)
                     else:
