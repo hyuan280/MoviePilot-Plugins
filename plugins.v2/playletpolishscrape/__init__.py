@@ -1,4 +1,5 @@
 import datetime
+from ntpath import isfile
 import os
 import re
 import threading
@@ -6,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, List, Dict, Tuple, Optional
 from xml.dom import minidom
+from xpinyin import Pinyin
 
 import chardet
 import pytz
@@ -63,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.3.1"
+    plugin_version = "1.4"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -78,8 +80,11 @@ class PlayletPolishScrape(_PluginBase):
     # 私有属性
     _enabled = False
     _monitor_confs = None
+    _rename_title = None
     _onlyonce = False
+    _link_pass = False
     _exclude_keywords = ""
+    _polish_keywords = ""
     _transfer_type = "link"
     _storage_type = StorageSchema.Local.value
     _observer = []
@@ -92,7 +97,10 @@ class PlayletPolishScrape(_PluginBase):
     _searchsites = []
     _site_infos = []
     _site_cache = {}
-    _img_cache = {}
+    _error_count = 5
+    _img_error_cache = {}
+    _search_error_cache = {}
+    _name_error_cache = {}
 
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
@@ -102,17 +110,22 @@ class PlayletPolishScrape(_PluginBase):
         self._dirconf = {}
         self._coverconf = {}
         self._site_infos = []
-        #self._site_cache = {}
-        self._img_cache = {}
+        self._site_cache = {}
+        self._img_error_cache = {}
+        self._search_error_cache = {}
+        self._name_error_cache = {}
 
         if config:
             self._enabled = config.get("enabled")
             self._onlyonce = config.get("onlyonce")
+            self._link_pass = config.get("link_pass")
             self._searchsites = config.get("searchsites", [])
             self._interval = config.get("interval")
             self._notify = config.get("notify")
             self._monitor_confs = config.get("monitor_confs")
+            self._rename_title = config.get("rename_title")
             self._exclude_keywords = config.get("exclude_keywords") or ""
+            self._polish_keywords = config.get("polish_keywords") or ""
             self._transfer_type = config.get("transfer_type") or "link"
             self._storage_type = config.get("storage_type") or StorageSchema.Local.value
 
@@ -216,6 +229,37 @@ class PlayletPolishScrape(_PluginBase):
                 self._scheduler.print_jobs()
                 self._scheduler.start()
 
+    def __is_check_pass(self, path_str: str) -> bool:
+        """
+        检查路径是否需要跳过处理
+        :param path_str: 路径字符串
+        :return: 是否pass
+        """
+
+        if self._link_pass:
+            # 检查是否是文件而且是硬链接
+            if os.path.isfile(path_str):
+                # 检查是否是硬链接
+                if os.stat(path_str).st_nlink > 1:
+                    #logger.debug(f"{path_str} 硬链接已整理，跳过处理")
+                    return True
+
+        # 过滤关键字
+        if self._polish_keywords:
+            for keyword in self._polish_keywords.split("\n"):
+                if keyword and re.findall(keyword, path_str):
+                    return False
+            #logger.debug(f"{path_str} 未命中整理关键字，跳过处理")
+            return True
+
+        if self._exclude_keywords:
+            for keyword in self._exclude_keywords.split("\n"):
+                if keyword and re.findall(keyword, path_str):
+                    #logger.debug(f"{path_str} 命中过滤关键字 {keyword}，跳过处理")
+                    return True
+
+        return False
+
     def sync_all(self):
         """
         立即运行一次，全量同步目录中所有文件
@@ -225,6 +269,8 @@ class PlayletPolishScrape(_PluginBase):
         for mon_path in self._dirconf.keys():
             # 遍历目录下所有文件
             for file_path in SystemUtils.list_files(Path(mon_path), settings.RMT_MEDIAEXT):
+                if self.__is_check_pass(str(file_path)):
+                    continue
                 self.__handle_file(is_directory=Path(file_path).is_dir(),
                                    event_path=str(file_path),
                                    source_dir=mon_path)
@@ -244,12 +290,8 @@ class PlayletPolishScrape(_PluginBase):
             logger.info(f"{event_path} 是回收站的文件，跳过处理")
             return
 
-        # 命中过滤关键字不处理
-        if self._exclude_keywords:
-            for keyword in self._exclude_keywords.split("\n"):
-                if keyword and re.findall(keyword, event_path):
-                    logger.info(f"{event_path} 命中过滤关键字 {keyword}，不处理")
-                    return
+        if self.__is_check_pass(event_path):
+            return
 
         # 不是媒体文件不处理
         if Path(event_path).suffix not in settings.RMT_MEDIAEXT:
@@ -261,6 +303,17 @@ class PlayletPolishScrape(_PluginBase):
         self.__handle_file(is_directory=event.is_directory,
                            event_path=event_path,
                            source_dir=source_dir)
+
+    def __to_pinyin_with_title(self, s):
+        if not s:
+            return ""
+
+        p = Pinyin()
+        pinyin_list = []
+        for z in s:
+            pinyin_list.append(p.get_pinyin(z, '').title())
+
+        return ' '.join(pinyin_list).replace('，', ',')
 
     def __meta_search_tv_name(self, file_meta: MetaInfoPath, tv_name: str, is_compilations: bool = False):
         tv_name = tv_name.strip('.')
@@ -293,8 +346,11 @@ class PlayletPolishScrape(_PluginBase):
             ep_match = re.search(r'(\d+)-(\d+)', file_meta.org_string)
             logger.info(f"从文件名中提取集数：{ep_match}")
             if ep_match:
-                file_meta.begin_episode = int(ep_match.group(1))
-                file_meta.end_episode = int(ep_match.group(2))
+                try:
+                    file_meta.begin_episode = int(ep_match.group(1))
+                    file_meta.end_episode = int(ep_match.group(2))
+                except:
+                    logger.error(f"文件名获取的集数错误({ep_match.group(1)}-{ep_match.group(2)})")
 
         if actor_list:
             actors = ' '.join(actor_list)
@@ -306,7 +362,7 @@ class PlayletPolishScrape(_PluginBase):
             file_meta.org_string = title
             file_meta.subtitle = subtitle
             file_meta.cn_name = title
-            file_meta.name = title
+            file_meta.en_name = self.__to_pinyin_with_title(title)
             file_meta.begin_season = 0
             file_meta.total_season = 1
             file_meta.total_episode = 1
@@ -316,7 +372,7 @@ class PlayletPolishScrape(_PluginBase):
             file_meta.org_string = title
             file_meta.subtitle = subtitle
             file_meta.cn_name = title
-            file_meta.name = title
+            file_meta.en_name = self.__to_pinyin_with_title(title)
             file_meta.begin_season = 1
             file_meta.total_season = 1
             file_meta.total_episode = episodes
@@ -339,12 +395,29 @@ class PlayletPolishScrape(_PluginBase):
                 return None
             tv_name = parent_dir.parent.name
             file_meta = self.__meta_search_tv_name(file_meta, tv_name, True)
-        elif re.search(r'^\d+(-\d+)?[集话]?$', file_meta.org_string):
+        elif re.search(r'^\d+(-\d+)?([集话]|本季完|完结|最终集|大结局)?$', file_meta.org_string):
             if is_directory:
                 logger.warn(f"单独的数字目录，不处理：{media_path}")
                 return None
             tv_name = Path(media_path).parent.name
+            if tv_name == "分集":
+                tv_name = Path(media_path).parent.parent.name
             file_meta = self.__meta_search_tv_name(file_meta, tv_name)
+
+        if self._rename_title:
+            rename_titles = self._rename_title.split("\n")
+            if not rename_titles:
+                return file_meta
+            for rename_title in rename_titles:
+                if not '=>' in rename_title:
+                    continue
+                old_title = rename_title.split('=>')[0].strip()
+                new_title = rename_title.split('=>')[1].strip()
+                if old_title in file_meta.name:
+                    logger.info(f"替换标题：{file_meta.name} => {new_title}")
+                    file_meta.name = new_title
+                    break
+
         return file_meta
 
     def __handle_file(self, is_directory: bool, event_path: str, source_dir: str):
@@ -354,23 +427,22 @@ class PlayletPolishScrape(_PluginBase):
         :param event_path: 事件文件路径
         :param source_dir: 监控目录
         """
-        try:
-            # 转移路径
-            dest_dir = self._dirconf.get(source_dir)
-            # 元数据
-            file_meta = self.__meta_complement(is_directory, event_path)
-            if not file_meta:
-                return
-            metadict = file_meta.to_dict()
-            logger.debug(f"元数据：{metadict}")
-            if not file_meta.name:
-                logger.error(f"{Path(event_path).name} 无法识别有效信息")
-                return
+        # 转移路径
+        dest_dir = self._dirconf.get(source_dir)
+        # 元数据
+        file_meta = self.__meta_complement(is_directory, event_path)
+        if not file_meta:
+            return
+        metadict = file_meta.to_dict()
+        logger.debug(f"元数据：{metadict}")
+        if not file_meta.name:
+            logger.error(f"{Path(event_path).name} 无法识别有效信息")
+            return
 
+        try:
             # 从选择的站点识别媒体信息
-            if file_meta.name in self._site_cache.keys():
-                mediainfo = self._site_cache.get(file_meta.name)
-            else:
+            mediainfo = self._site_cache.get(file_meta.name)
+            if not mediainfo:
                 logger.info(f"从选择的站点 {self._searchsites} 识别媒体信息")
                 mediainfo = self._sites_recognize_media(file_meta)
                 if mediainfo:
@@ -384,6 +456,13 @@ class PlayletPolishScrape(_PluginBase):
             if file_meta.begin_season == 0:
                 mediainfo.season = 0
             logger.debug(f"媒体信息：{mediainfo}")
+
+            if file_meta.name in self._name_error_cache.keys():
+                if self._name_error_cache.get(file_meta.name) > self._error_count:
+                    logger.info(f"剧名（{file_meta.name}）搜索错误次数超过{self._error_count}次")
+                    return
+            else:
+                self._name_error_cache[file_meta.name] = 0
             try:
                 # 查询转移目的目录
                 target_dir = DirectoryHelper().get_dir(mediainfo, src_path=Path(source_dir))
@@ -429,6 +508,8 @@ class PlayletPolishScrape(_PluginBase):
 
             self._site_scrape_metadata(file_meta, transferinfo, mediainfo=mediainfo)
 
+            self._name_error_cache[file_meta.name] = 0
+
             # 广播事件
             # self.eventmanager.send_event(EventType.TransferComplete, {
             #     'meta': file_meta,
@@ -456,6 +537,7 @@ class PlayletPolishScrape(_PluginBase):
                     }
                 self._medias[mediainfo.title_year] = media_list
         except Exception as e:
+            self._name_error_cache[file_meta.name] = self._site_cache.get(file_meta.name) + 1
             logger.error(f"event_handler_created error: {e}")
             print(str(e))
 
@@ -471,15 +553,23 @@ class PlayletPolishScrape(_PluginBase):
                     return True
         return False
 
-    def _site_meta_update(self, meta, info):
-        info['org_string'] = meta.org_string
-        info['cn_name'] = meta.cn_name
-        info['name'] = meta.name
-        info['subtitle'] = meta.subtitle
-        info['begin_season'] = meta.begin_season
-        info['total_season'] = meta.total_season
-        info['total_episode'] = meta.total_episode
-        info['season_episode'] = "S01"
+    def _site_meta_update(self, meta, info, cover: bool = False):
+        if not info.get('org_string') or cover:
+            info['org_string'] = meta.org_string
+        if not info.get('cn_name') or cover:
+            info['cn_name'] = meta.cn_name
+        if not info.get('en_name') or cover:
+            info['en_name'] = meta.en_name
+        if not info.get('subtitle') or cover:
+            info['subtitle'] = meta.subtitle
+        if not info.get('begin_season') or cover:
+            info['begin_season'] = meta.begin_season
+        if not info.get('total_season') or cover:
+            info['total_season'] = meta.total_season
+        if not info.get('total_episode') or cover:
+            info['total_episode'] = meta.total_episode
+        if not info.get('season_episode') or cover:
+            info['season_episode'] = "S01"
 
     def _site_get_context(self, meta):
         site_contexts = []
@@ -488,49 +578,95 @@ class PlayletPolishScrape(_PluginBase):
         if torrents:
             for torrent in torrents:
                 _context = torrent.to_dict()
-                if meta.name == _context.get('meta_info').get('en_name') or meta.name == _context.get('meta_info').get('cn_name'):
+                logger.debug(f"context: {_context}")
+                if meta.en_name == _context.get('meta_info').get('en_name') or meta.cn_name == _context.get('meta_info').get('cn_name'):
+                    self._site_meta_update(meta, _context.get('meta_info'))
                     site_contexts.append(_context)
                 else:
                     if self._site_comparison_meta(meta.name, _context.get('meta_info').get('org_string')):
-                        self._site_meta_update(meta, _context.get('meta_info'))
+                        self._site_meta_update(meta, _context.get('meta_info'), True)
                         site_contexts.append(_context)
         if len(site_contexts) == 0:
+            if meta.name in self._search_error_cache.keys():
+                if self._search_error_cache.get(meta.name) > self._error_count:
+                    logger.warn(f"种子访问失败次数超过{self._error_count}次：{meta.name}")
+                    return {}
+            else:
+                self._search_error_cache[meta.name] = 0
+
             torrents = SearchChain().search_by_title(title=meta.name, sites=self._searchsites, cache_local=True)
             if torrents:
                 for torrent in torrents:
                     _context = torrent.to_dict()
                     logger.debug(f"context: {_context}")
-                    if meta.name == _context.get('meta_info').get('en_name') or meta.name == _context.get('meta_info').get('cn_name'):
+                    if meta.en_name == _context.get('meta_info').get('en_name') or meta.cn_name == _context.get('meta_info').get('cn_name'):
+                        self._site_meta_update(meta, _context.get('meta_info'))
                         site_contexts.append(_context)
                     else:
                         if self._site_comparison_meta(meta.name, _context.get('meta_info').get('org_string')):
-                            self._site_meta_update(meta, _context.get('meta_info'))
+                            self._site_meta_update(meta, _context.get('meta_info'), True)
                             site_contexts.append(_context)
+            else:
+                self._search_error_cache[meta.name] = self._search_error_cache.get(meta.name) + 1
+                return {}
 
         site_contexts_year = []
         if len(site_contexts) == 0:
+            self._search_error_cache[meta.name] = self._search_error_cache.get(meta.name) + 1
             return {}
-        elif len(site_contexts) == 1:
+
+        self._search_error_cache[meta.name] = 0
+        if len(site_contexts) == 1:
             return site_contexts[0]
         else:
+            _year_priority = []
+            _year_null = []
+            # 有year的放前面
             for _m in site_contexts:
-                if meta.year == _m.get('meta_info').get('year'):
-                    site_contexts_year.append(_m)
+                if _m.get('meta_info').get('year'):
+                    _year_priority.append(_m)
+                else:
+                    _year_null.append(_m)
+            if _year_priority:
+                _year_priority.extend(_year_null)
+            else:
+                _year_priority = _year_null
+            site_contexts = _year_priority
+            if meta.year:
+                for _m in site_contexts:
+                    if meta.year == _m.get('meta_info').get('year'):
+                        site_contexts_year.append(_m)
 
         site_contexts_edition = []
         if len(site_contexts_year) == 0:
             return site_contexts[0]
-        elif len(site_contexts_year) == 1:
+
+        if len(site_contexts_year) == 1:
             return site_contexts_year[0]
         else:
+            _edition_priority = []
+            _edition_null = []
+            # 有edition的放前面
             for _m in site_contexts_year:
-                if meta.edition == _m.get('meta_info').get('edition'):
-                    site_contexts_edition.append(_m)
+                if _m.get('meta_info').get('edition'):
+                    _edition_priority.append(_m)
+                else:
+                    _edition_null.append(_m)
+            if _edition_priority:
+                _edition_priority.extend(_edition_null)
+            else:
+                _edition_priority = _edition_null
+            site_contexts_year = _edition_priority
+            if meta.edition:
+                for _m in site_contexts_year:
+                    if not meta.edition and meta.edition == _m.get('meta_info').get('edition'):
+                        site_contexts_edition.append(_m)
 
         site_contexts_season = []
         if len(site_contexts_edition) == 0:
             return site_contexts_year[0]
-        elif len(site_contexts_edition) == 1:
+
+        if len(site_contexts_edition) == 1:
             return site_contexts_edition[0]
         else:
             for _m in site_contexts_edition:
@@ -587,7 +723,7 @@ class PlayletPolishScrape(_PluginBase):
 
         subtitle = context.get('meta_info').get('subtitle')
         tags = []
-        if '类型' in subtitle:
+        if subtitle and '类型' in subtitle:
             subtitle_strs = subtitle.split('|')
             for s in subtitle_strs:
                 if '类型' in s:
@@ -600,7 +736,7 @@ class PlayletPolishScrape(_PluginBase):
                     tags.append(_l)
 
         actors = []
-        if '演员' in subtitle:
+        if subtitle and '演员' in subtitle:
             subtitle_strs = subtitle.split('|')
             for s in subtitle_strs:
                 if '演员' in s:
@@ -648,7 +784,6 @@ class PlayletPolishScrape(_PluginBase):
             logger.debug(f"保存风景图片：{landscape_path}")
             self.__save_poster(input_path=thumb_path, poster_path=landscape_path, cover_conf="16:9")
         poster_path = f"{transferinfo.target_diritem.path}season{season:02d}-poster.jpg"
-        logger.info(f"季的图片: {poster_path}")
         if not os.path.exists(poster_path):
             logger.debug(f"保存海报图片：{poster_path}")
             self.__save_poster(input_path=thumb_path, poster_path=poster_path, cover_conf="2:3")
@@ -880,30 +1015,30 @@ class PlayletPolishScrape(_PluginBase):
         """
         下载图片并保存
         """
-        if url in self._img_cache.keys():
-            if self._img_cache.get(url) > 10:
-                logger.info(f"图片下载失败次数超过10次：{url}")
+        if url in self._img_error_cache.keys():
+            if self._img_error_cache.get(url) > self._error_count:
+                logger.info(f"图片下载失败次数超过{self._error_count}次：{url}")
                 return False
         else:
-            self._img_cache[url] = 0
+            self._img_error_cache[url] = 0
 
         try:
             logger.info(f"正在下载{file_path.stem}图片：{url} ...")
             r = RequestUtils().get_res(url=url, raise_exception=True)
             if r:
                 file_path.write_bytes(r.content)
-                logger.info(f"图片已保存：{file_path}")
-                self._img_cache[url] = 0
+                logger.debug(f"图片已保存：{file_path}")
+                self._img_error_cache[url] = 0
                 return True
             else:
-                logger.info(f"{file_path.stem}图片下载失败，请检查网络连通性")
-                self._img_cache[url] = self._img_cache.get(url) + 1
+                logger.warn(f"{file_path.stem}图片下载失败，请检查网络连通性")
+                self._img_error_cache[url] = self._img_error_cache.get(url) + 1
                 return False
         except RequestException as err:
             raise err
         except Exception as err:
             logger.error(f"{file_path.stem}图片下载失败：{str(err)}")
-            self._img_cache[url] = self._img_cache.get(url) + 1
+            self._img_error_cache[url] = self._img_error_cache.get(url) + 1
             return False
 
     def __get_page_source(self, url: str, site):
@@ -961,14 +1096,17 @@ class PlayletPolishScrape(_PluginBase):
         """
         self.update_config({
             "enabled": self._enabled,
+            "polish_keywords": self._polish_keywords,
             "exclude_keywords": self._exclude_keywords,
             "transfer_type": self._transfer_type,
             "storage_type": self._storage_type,
             "searchsites": self._searchsites,
             "onlyonce": self._onlyonce,
+            "link_pass": self._link_pass,
             "interval": self._interval,
             "notify": self._notify,
-            "monitor_confs": self._monitor_confs
+            "monitor_confs": self._monitor_confs,
+            "rename_title": self._rename_title,
         })
 
     def get_state(self) -> bool:
@@ -1000,7 +1138,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1016,7 +1154,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1032,7 +1170,23 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'link_pass',
+                                            'label': '排除硬链接',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1145,8 +1299,52 @@ class PlayletPolishScrape(_PluginBase):
                                         'props': {
                                             'model': 'monitor_confs',
                                             'label': '监控目录',
-                                            'rows': 5,
+                                            'rows': 3,
                                             'placeholder': '监控方式#监控目录#目的目录'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'rename_title',
+                                            'label': '标题重命名',
+                                            'rows': 2,
+                                            'placeholder': '原标题=>新标题'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'polish_keywords',
+                                            'label': '整理关键词',
+                                            'rows': 2,
+                                            'placeholder': '每一行一个关键词'
                                         }
                                     }
                                 ]
@@ -1222,9 +1420,12 @@ class PlayletPolishScrape(_PluginBase):
         ], {
             "enabled": False,
             "onlyonce": False,
+            "link_pass": False,
             "notify": False,
             "interval": 10,
             "monitor_confs": "",
+            "rename_title": "",
+            "polish_keywords": "",
             "exclude_keywords": "",
             "transfer_type": "link",
             "storage_type": "local"
