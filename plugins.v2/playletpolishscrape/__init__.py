@@ -35,6 +35,7 @@ from app.utils.common import retry
 from app.utils.dom import DomUtils
 from app.utils.http import RequestUtils
 from app.utils.system import SystemUtils
+from app.utils.string import StringUtils
 
 ffmpeg_lock = threading.Lock()
 lock = Lock()
@@ -65,7 +66,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.4"
+    plugin_version = "1.4.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -321,7 +322,7 @@ class PlayletPolishScrape(_PluginBase):
         tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
         tv_name = re.sub(r'＆', '&', tv_name)
         logger.info(f"尝试识别媒体信息：{tv_name}")
-        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
+        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
         if match:
             title = match.group(1).strip().split('(')[0]
             try:
@@ -367,7 +368,6 @@ class PlayletPolishScrape(_PluginBase):
             file_meta.total_season = 1
             file_meta.total_episode = 1
             file_meta.begin_episode = 1
-            file_meta.en_name = None
         else:
             file_meta.org_string = title
             file_meta.subtitle = subtitle
@@ -376,13 +376,12 @@ class PlayletPolishScrape(_PluginBase):
             file_meta.begin_season = 1
             file_meta.total_season = 1
             file_meta.total_episode = episodes
-            file_meta.en_name = None
         return file_meta
 
     def __meta_complement(self, is_directory: bool, media_path: str):
         _path = Path(media_path)
         file_meta = MetaInfoPath(_path)
-        if _path.parent.name in ['合集', '长篇']:
+        if _path.parent.name in ['合集', '长篇', '长篇合集', '合集长篇']:
             logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
             parent_dir = _path.parent
             is_tv = False
@@ -413,11 +412,19 @@ class PlayletPolishScrape(_PluginBase):
                     continue
                 old_title = rename_title.split('=>')[0].strip()
                 new_title = rename_title.split('=>')[1].strip()
-                if old_title in file_meta.name:
-                    logger.info(f"替换标题：{file_meta.name} => {new_title}")
-                    file_meta.name = new_title
-                    break
+                if StringUtils.is_chinese(new_title):
+                    if old_title in file_meta.cn_name:
+                        logger.info(f"替换标题：{file_meta.cn_name} => {new_title}")
 
+                        file_meta.cn_name = new_title
+                        file_meta.en_name = self.__to_pinyin_with_title(new_title)
+                    break
+                else:
+                    if old_title in file_meta.en_name:
+                        logger.info(f"替换标题：{file_meta.en_name} => {new_title}")
+                        file_meta.cn_name = None
+                        file_meta.en_name = old_title
+                    break
         return file_meta
 
     def __handle_file(self, is_directory: bool, event_path: str, source_dir: str):
@@ -441,12 +448,12 @@ class PlayletPolishScrape(_PluginBase):
 
         try:
             # 从选择的站点识别媒体信息
-            mediainfo = self._site_cache.get(file_meta.name)
+            mediainfo = self._site_cache.get(file_meta.cn_name)
             if not mediainfo:
                 logger.info(f"从选择的站点 {self._searchsites} 识别媒体信息")
                 mediainfo = self._sites_recognize_media(file_meta)
                 if mediainfo:
-                    self._site_cache[file_meta.name] = mediainfo
+                    self._site_cache[file_meta.cn_name] = mediainfo
 
             if not mediainfo:
                 logger.error(f"选择的站点未查找到媒体信息")
@@ -457,12 +464,12 @@ class PlayletPolishScrape(_PluginBase):
                 mediainfo.season = 0
             logger.debug(f"媒体信息：{mediainfo}")
 
-            if file_meta.name in self._name_error_cache.keys():
-                if self._name_error_cache.get(file_meta.name) > self._error_count:
-                    logger.info(f"剧名（{file_meta.name}）搜索错误次数超过{self._error_count}次")
+            if file_meta.cn_name in self._name_error_cache.keys():
+                if self._name_error_cache.get(file_meta.cn_name) > self._error_count:
+                    logger.info(f"剧名（{file_meta.cn_name}）搜索错误次数超过{self._error_count}次")
                     return
             else:
-                self._name_error_cache[file_meta.name] = 0
+                self._name_error_cache[file_meta.cn_name] = 0
             try:
                 # 查询转移目的目录
                 target_dir = DirectoryHelper().get_dir(mediainfo, src_path=Path(source_dir))
@@ -508,7 +515,7 @@ class PlayletPolishScrape(_PluginBase):
 
             self._site_scrape_metadata(file_meta, transferinfo, mediainfo=mediainfo)
 
-            self._name_error_cache[file_meta.name] = 0
+            self._name_error_cache[file_meta.cn_name] = 0
 
             # 广播事件
             # self.eventmanager.send_event(EventType.TransferComplete, {
@@ -537,7 +544,7 @@ class PlayletPolishScrape(_PluginBase):
                     }
                 self._medias[mediainfo.title_year] = media_list
         except Exception as e:
-            self._name_error_cache[file_meta.name] = self._site_cache.get(file_meta.name) + 1
+            self._name_error_cache[file_meta.cn_name] = self._site_cache.get(file_meta.cn_name) + 1
             logger.error(f"event_handler_created error: {e}")
             print(str(e))
 
@@ -547,7 +554,7 @@ class PlayletPolishScrape(_PluginBase):
         match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
         if match:
             title = match.group(1).strip().split('(')[0]
-            if name == title:
+            if name and name == title:
                 return True
             elif len(name) > 6 and name in title:
                     return True
@@ -570,6 +577,7 @@ class PlayletPolishScrape(_PluginBase):
             info['total_episode'] = meta.total_episode
         if not info.get('season_episode') or cover:
             info['season_episode'] = "S01"
+        return info
 
     def _site_get_context(self, meta):
         site_contexts = []
@@ -579,43 +587,43 @@ class PlayletPolishScrape(_PluginBase):
             for torrent in torrents:
                 _context = torrent.to_dict()
                 logger.debug(f"context: {_context}")
-                if meta.en_name == _context.get('meta_info').get('en_name') or meta.cn_name == _context.get('meta_info').get('cn_name'):
-                    self._site_meta_update(meta, _context.get('meta_info'))
+                if (meta.en_name and meta.en_name == _context.get('meta_info').get('en_name')) or (meta.cn_name and meta.cn_name == _context.get('meta_info').get('cn_name')):
+                    _context['meta_info'] = self._site_meta_update(meta, _context.get('meta_info'))
                     site_contexts.append(_context)
                 else:
-                    if self._site_comparison_meta(meta.name, _context.get('meta_info').get('org_string')):
-                        self._site_meta_update(meta, _context.get('meta_info'), True)
+                    if self._site_comparison_meta(meta.cn_name, _context.get('meta_info').get('org_string')):
+                        _context['meta_info'] = self._site_meta_update(meta, _context.get('meta_info'), True)
                         site_contexts.append(_context)
         if len(site_contexts) == 0:
-            if meta.name in self._search_error_cache.keys():
-                if self._search_error_cache.get(meta.name) > self._error_count:
-                    logger.warn(f"种子访问失败次数超过{self._error_count}次：{meta.name}")
+            if meta.cn_name in self._search_error_cache.keys():
+                if self._search_error_cache.get(meta.cn_name) > self._error_count:
+                    logger.warn(f"种子访问失败次数超过{self._error_count}次：{meta.cn_name}")
                     return {}
             else:
-                self._search_error_cache[meta.name] = 0
+                self._search_error_cache[meta.cn_name] = 0
 
-            torrents = SearchChain().search_by_title(title=meta.name, sites=self._searchsites, cache_local=True)
+            torrents = SearchChain().search_by_title(title=meta.cn_name, sites=self._searchsites, cache_local=True)
             if torrents:
                 for torrent in torrents:
                     _context = torrent.to_dict()
                     logger.debug(f"context: {_context}")
                     if meta.en_name == _context.get('meta_info').get('en_name') or meta.cn_name == _context.get('meta_info').get('cn_name'):
-                        self._site_meta_update(meta, _context.get('meta_info'))
+                        _context['meta_info'] = self._site_meta_update(meta, _context.get('meta_info'))
                         site_contexts.append(_context)
                     else:
-                        if self._site_comparison_meta(meta.name, _context.get('meta_info').get('org_string')):
-                            self._site_meta_update(meta, _context.get('meta_info'), True)
+                        if self._site_comparison_meta(meta.cn_name, _context.get('meta_info').get('org_string')):
+                            _context['meta_info'] = self._site_meta_update(meta, _context.get('meta_info'), True)
                             site_contexts.append(_context)
             else:
-                self._search_error_cache[meta.name] = self._search_error_cache.get(meta.name) + 1
+                self._search_error_cache[meta.cn_name] = self._search_error_cache.get(meta.cn_name) + 1
                 return {}
 
         site_contexts_year = []
         if len(site_contexts) == 0:
-            self._search_error_cache[meta.name] = self._search_error_cache.get(meta.name) + 1
+            self._search_error_cache[meta.cn_name] = self._search_error_cache.get(meta.cn_name) + 1
             return {}
 
-        self._search_error_cache[meta.name] = 0
+        self._search_error_cache[meta.cn_name] = 0
         if len(site_contexts) == 1:
             return site_contexts[0]
         else:
@@ -976,7 +984,6 @@ class PlayletPolishScrape(_PluginBase):
         :param dir_path: 电视剧集目录
         """
         # 开始生成XML
-        logger.info(f"正在生成电视集NFO文件：{dir_path.name}")
         doc = minidom.Document()
         root = DomUtils.add_node(doc, doc, "episodedetails")
 
