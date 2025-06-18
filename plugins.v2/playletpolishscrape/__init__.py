@@ -22,6 +22,7 @@ from app.helper.sites import SitesHelper
 
 from app.chain.search import SearchChain
 from app.chain.storage import StorageChain
+from app.chain.media import MediaChain
 from app.core.config import settings
 from app.core.metainfo import MetaInfoPath
 from app.core.context import MediaInfo
@@ -66,7 +67,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.4.2"
+    plugin_version = "1.4.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -549,9 +550,15 @@ class PlayletPolishScrape(_PluginBase):
             print(str(e))
 
     def _site_comparison_meta(self, name, tv_name):
+        '''
+        粗略的识别是不是搜索到了种子
+        :param name: 媒体的中文标题
+        :param tv_name: 搜索到的种子标题
+        :return: 是否是这个种子
+        '''
         tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
         tv_name = re.sub(r'＆', '&', tv_name)
-        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕]\)(?:&?([^&]+))?', tv_name)
+        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
         if match:
             title = match.group(1).strip().split('(')[0]
             if name and name == title:
@@ -561,6 +568,13 @@ class PlayletPolishScrape(_PluginBase):
         return False
 
     def _site_meta_update(self, meta, info, cover: bool = False):
+        '''
+        补全站点搜索的元数据
+        :param meta: 文件元数据
+        :param info:站点搜索到的媒体元数据
+        :param cover: 是否覆盖站点搜索的媒体元数据
+        :return: 更新后的媒体元数据
+        '''
         if not info.get('org_string') or cover:
             info['org_string'] = meta.org_string
         if not info.get('cn_name') or cover:
@@ -580,6 +594,11 @@ class PlayletPolishScrape(_PluginBase):
         return info
 
     def _site_get_context(self, meta):
+        '''
+        从站点搜索种子
+        :param meta: 文件元数据
+        :return: 最符合的种子信息
+        '''
         site_contexts = []
 
         torrents = SearchChain().last_search_results()
@@ -686,7 +705,12 @@ class PlayletPolishScrape(_PluginBase):
         else:
             return site_contexts_season[0]
 
-    def _site_brief_text(self, torrent):
+    def _site_brief_text(self, torrent: dict):
+        '''
+        获取种子详情页
+        :param torrent: 种子信息
+        :return: 页面text
+        '''
         site = SiteOper().get(torrent.get('site'))
         url = torrent.get("page_url")
         # 获取种子详情页
@@ -703,6 +727,11 @@ class PlayletPolishScrape(_PluginBase):
         return html
 
     def _sites_recognize_media(self, meta):
+        '''
+        从站点识别媒体信息
+        :param meta: 文件元数据
+        :return: 媒体元数据
+        '''
         context = self._site_get_context(meta)
         if not context:
             return None
@@ -778,31 +807,49 @@ class PlayletPolishScrape(_PluginBase):
 
         return mediainfo
 
-    def _site_save_all_img(self, thumb_path, transferinfo, season: int):
-        backdrop_path = f"{transferinfo.target_diritem.path}poster.jpg"
-        if not os.path.exists(backdrop_path):
-            logger.debug(f"保存背景图片：{backdrop_path}")
-            self.__save_poster(input_path=thumb_path, poster_path=backdrop_path, cover_conf="16:9")
-        folder_path = f"{transferinfo.target_diritem.path}folder.jpg"
-        if not os.path.exists(folder_path):
-            logger.debug(f"保存文件夹图片：{folder_path}")
-            self.__save_poster(input_path=thumb_path, poster_path=folder_path, cover_conf="2:3")
-        landscape_path = f"{transferinfo.target_diritem.path}landscape.jpg"
-        if not os.path.exists(landscape_path):
-            logger.debug(f"保存风景图片：{landscape_path}")
-            self.__save_poster(input_path=thumb_path, poster_path=landscape_path, cover_conf="16:9")
-        poster_path = f"{transferinfo.target_diritem.path}season{season:02d}-poster.jpg"
-        if not os.path.exists(poster_path):
-            logger.debug(f"保存海报图片：{poster_path}")
-            self.__save_poster(input_path=thumb_path, poster_path=poster_path, cover_conf="2:3")
-        episode_video_path = transferinfo.target_item.path
-        _episode_video_path = Path(episode_video_path)
-        episode_thumb_path = _episode_video_path.with_name(_episode_video_path.stem + "-thumb.jpg")
-        if not os.path.exists(episode_thumb_path):
-            logger.debug(f"保存每集图片：{episode_thumb_path}")
-            self.get_thumb(episode_video_path, episode_thumb_path)
+    def _site_save_all_img(self, thumb_path, transferinfo, season: int, scraping_switchs: dict):
+        '''
+        保存刮削图片
+        :param thumb_path: 下载好的缩略图路径
+        :param transferinfo: 媒体整理的转移信息
+        :param season: 短剧季数
+        :param scraping_switchs: mp的刮削配置开关
+        '''
+        if scraping_switchs.get('tv_backdrop'):
+            backdrop_path = f"{transferinfo.target_diritem.path}poster.jpg"
+            if not os.path.exists(backdrop_path):
+                logger.debug(f"保存电视剧背景图：{backdrop_path}")
+                self.__save_poster(input_path=thumb_path, poster_path=backdrop_path, cover_conf="16:9")
+        if scraping_switchs.get('tv_thumb') or scraping_switchs.get('tv_poster'):
+            folder_path = f"{transferinfo.target_diritem.path}folder.jpg"
+            if not os.path.exists(folder_path):
+                logger.debug(f"保存电视剧缩略图：{folder_path}")
+                self.__save_poster(input_path=thumb_path, poster_path=folder_path, cover_conf="2:3")
+        if scraping_switchs.get('tv_banner'):
+            landscape_path = f"{transferinfo.target_diritem.path}landscape.jpg"
+            if not os.path.exists(landscape_path):
+                logger.debug(f"保存电视剧横幅图：{landscape_path}")
+                self.__save_poster(input_path=thumb_path, poster_path=landscape_path, cover_conf="16:9")
+        if scraping_switchs.get('season_poster'):
+            poster_path = f"{transferinfo.target_diritem.path}season{season:02d}-poster.jpg"
+            if not os.path.exists(poster_path):
+                logger.debug(f"保存季海报：{poster_path}")
+                self.__save_poster(input_path=thumb_path, poster_path=poster_path, cover_conf="2:3")
+        if scraping_switchs.get('episode_thumb'):
+            episode_video_path = transferinfo.target_item.path
+            _episode_video_path = Path(episode_video_path)
+            episode_thumb_path = _episode_video_path.with_name(_episode_video_path.stem + "-thumb.jpg")
+            if not os.path.exists(episode_thumb_path):
+                logger.debug(f"保存每集图片：{episode_thumb_path}")
+                self.get_thumb(episode_video_path, episode_thumb_path)
 
     def _site_scrape_metadata(self, file_meta, transferinfo, mediainfo):
+        '''
+        从站点刮削图片
+        :param file_meta: 文件元数据
+        :param transferinfo:媒体整理的转移信息
+        :param mediainfo: 媒体元数据
+        '''
         tv_path = transferinfo.target_diritem.path
         ep_path = transferinfo.target_item.path
         se_path = os.path.dirname(ep_path)
@@ -813,22 +860,26 @@ class PlayletPolishScrape(_PluginBase):
         else:
             episode = -1
 
-        if not os.path.exists(f"{tv_path}/tvshow.nfo"):
-            self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline, mediainfo.actors)
-        if not os.path.exists(f"{se_path}/season.nfo"):
-            self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
-        if not os.path.exists(f"{se_path}/{name}.nfo"):
-            self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date, end_episode=file_meta.end_episode)
+        scraping_switchs = MediaChain._get_scraping_switchs()
+        if scraping_switchs.get('tv_nfo'):
+            if not os.path.exists(f"{tv_path}/tvshow.nfo"):
+                self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline, mediainfo.actors)
+        if scraping_switchs.get('season_nfo'):
+            if not os.path.exists(f"{se_path}/season.nfo"):
+                self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
+        if scraping_switchs.get('episode_nfo'):
+            if not os.path.exists(f"{se_path}/{name}.nfo"):
+                self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date, end_episode=file_meta.end_episode)
 
         download_path = f"{tv_path}/download.jpg"
         file_path = Path(download_path)
         thumb_path = file_path.with_name(file_path.stem + "-site.jpg")
         if thumb_path.exists():
             logger.info(f"图片已下载：{thumb_path}")
-            self._site_save_all_img(thumb_path, transferinfo, mediainfo.season)
+            self._site_save_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
         else:
             if self.__save_image(url=mediainfo.poster_path, file_path=thumb_path):
-                self._site_save_all_img(thumb_path, transferinfo, mediainfo.season)
+                self._site_save_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
 
         #thumb_path.unlink()
         logger.info("图片搜刮完成")
@@ -908,6 +959,12 @@ class PlayletPolishScrape(_PluginBase):
         """
         生成电视剧总季的NFO描述文件
         :param dir_path: 电视剧根目录
+        :param title: 电视剧标题
+        :param year: 电视剧年份
+        :param plot: 电视剧简介
+        :param date: 电视剧发行日期
+        :param tags: 电视剧根标签
+        :param actors: 电视剧根演员
         """
         # 开始生成XML
         logger.info(f"正在生成电视剧总季NFO文件：{dir_path.name}")
@@ -948,6 +1005,11 @@ class PlayletPolishScrape(_PluginBase):
         """
         生成电视剧季的NFO描述文件
         :param dir_path: 电视剧季目录
+        :param season: 电视剧季数
+        :param year: 电视剧年份
+        :param plot: 电视剧简介
+        :param date: 电视剧发行日期
+        :param actors: 电视剧根演员
         """
         # 开始生成XML
         logger.info(f"正在生成电视剧季NFO文件：{dir_path.name}")
@@ -982,6 +1044,13 @@ class PlayletPolishScrape(_PluginBase):
         """
         生成电视剧集的NFO描述文件
         :param dir_path: 电视剧集目录
+        :param name: 电视剧集名字
+        :param season: 电视剧季数
+        :param episode: 电视剧集数
+        :param year: 电视剧年份
+        :param plot: 电视剧简介
+        :param date: 电视剧发行日期
+        :param end_episode: 电视剧多集整合的最后集数
         """
         # 开始生成XML
         doc = minidom.Document()
