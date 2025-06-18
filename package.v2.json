@@ -18,5 +18,17 @@
       "v1.1": "修复选择的站点被清空的问题",
       "v1.0": "短剧整理和刮削"
     }
+  },
+  "PlayletAutoRecognize" : {
+    "name": "短剧自动识别",
+    "description": "从站点和网站识别短剧",
+    "labels": "文件整理",
+    "version": "1.0",
+    "icon": "Amule_B.png",
+    "author": "hyuan280",
+    "level": 1,
+    "history": {
+      "v1.0": "添加红果免费短剧识别和站点识别"
+    }
   }
 }
