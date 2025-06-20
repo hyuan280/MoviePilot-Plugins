@@ -1,38 +1,15 @@
-import random
-import chardet
-import shutil
-import subprocess
-import threading
-import time
-import re
-import requests
-import pickle
-import traceback
 
-from threading import RLock
-from pathlib import Path
-from typing import Optional, Any, List, Dict, Tuple, Union
-
-import log
-from lxml import etree
-from xpinyin import Pinyin
+from typing import Optional, Any, List, Dict, Tuple
 
 from app.helper.sites import SitesHelper
 from app.core.meta import MetaBase
-from app.core.config import settings
 from app.core.context import MediaInfo
-from app.core.event import eventmanager, Event
-from app.modules import _ModuleBase
 from app.modules.filemanager import FileManagerModule
 from app.modules.themoviedb import TheMovieDbModule
 from app.db.site_oper import SiteOper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.schemas import TransferInfo
-from app.schemas.types import EventType, MediaType, NotificationType, ModuleType, MediaRecognizeType
-from app.schemas import TransferInfo, ExistMediaInfo, TmdbEpisode, TransferDirectoryConf, FileItem, StorageUsage
-from app.utils.system import SystemUtils
-from app.utils.http import RequestUtils
+from app.schemas.types import MediaType
 
 from .hongguomodule import HongGuoModule
 from .sitemodule import SiteModule
@@ -48,7 +25,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -62,6 +39,7 @@ class PlayletAutoRecognize(_PluginBase):
 
     # 私有属性
     _enabled = False
+    _clear_cache = False
     _onlyplaylet = True
     _filemanager = None
     _playlet_keywords = ""
@@ -82,12 +60,29 @@ class PlayletAutoRecognize(_PluginBase):
 
         if config:
             self._enabled = config.get("enabled")
+            self._clear_cache = config.get("clear_cache")
             self._onlyplaylet = config.get("onlyplaylet")
             self._playlet_keywords = config.get("playlet_keywords")
             self._searchwebs = config.get("searchwebs", [])
             self._searchsites = config.get("searchsites", [])
 
         logger.info(f"插件使能：{self._enabled}")
+        if self._clear_cache:
+            for _module_name in self._all_webs:
+                _module = self._all_webs.get(_module_name)
+                if _module:
+                    _module.clear_cache()
+            self._clear_cache = False
+
+        if self._searchsites:
+            site_id_to_public_status = {site.get("id"): site.get("public") for site in SitesHelper().get_indexers()}
+            self._searchsites = [
+                site_id for site_id in self._searchsites
+                if site_id in site_id_to_public_status and not site_id_to_public_status[site_id]
+            ]
+        # 更新配置
+        self.__update_config()
+
         if not self._enabled:
             # 清除数据
             self._recognize_srcs = {}
@@ -111,20 +106,12 @@ class PlayletAutoRecognize(_PluginBase):
                     self._recognize_srcs[_module_name] = _module
 
         if self._searchsites:
-            site_id_to_public_status = {site.get("id"): site.get("public") for site in SitesHelper().get_indexers()}
-            self._searchsites = [
-                site_id for site_id in self._searchsites
-                if site_id in site_id_to_public_status and not site_id_to_public_status[site_id]
-            ]
-
             if not self._recognize_srcs.get(SiteModule.get_name()):
                 _module = SiteModule(self._searchsites)
                 _module.init_module()
                 self._recognize_srcs[SiteModule.get_name()] = _module
 
         self._filemanager = FileManagerModule()
-
-        self.__update_config()
 
     def get_module(self) -> Dict[str, Any]:
         if not self._enabled:
@@ -252,7 +239,7 @@ class PlayletAutoRecognize(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -260,6 +247,22 @@ class PlayletAutoRecognize(_PluginBase):
                                         'props': {
                                             'model': 'enabled',
                                             'label': '启用插件',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'clearcache',
+                                            'label': '清空缓存',
                                         }
                                     }
                                 ]
@@ -398,6 +401,7 @@ class PlayletAutoRecognize(_PluginBase):
             }
         ], {
             "enabled": False,
+            "clearcache": False,
             "onlyplaylet": True,
             "playlet_keywords": "",
             "searchwebs": [],

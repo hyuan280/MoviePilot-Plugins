@@ -5,7 +5,6 @@ import requests
 from typing import Optional, Tuple, Union
 
 from lxml import etree
-from xpinyin import Pinyin
 
 from app.core.meta import MetaBase
 from app.core.context import MediaInfo
@@ -261,3 +260,11 @@ class HongGuoModule(_ModuleBase):
         定时任务，每10分钟调用一次
         """
         self.cache.save()
+
+    def clear_cache(self):
+        """
+        清除缓存
+        """
+        logger.info("开始清除红果缓存 ...")
+        self.cache.clear()
+        logger.info("红果缓存清除完成")

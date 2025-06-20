@@ -5,7 +5,6 @@ import datetime
 from typing import Optional, Tuple, Union
 
 from lxml import etree
-from xpinyin import Pinyin
 
 from app.chain.search import SearchChain
 from app.core.meta import MetaBase
@@ -13,7 +12,6 @@ from app.core.context import MediaInfo
 from app.modules import _ModuleBase
 from app.log import logger
 from app.schemas.types import MediaType, ModuleType, MediaRecognizeType
-from app.utils.http import RequestUtils
 from app.db.site_oper import SiteOper
 
 from .myutils import get_page_source
@@ -400,3 +398,11 @@ class SiteModule(_ModuleBase):
         定时任务，每10分钟调用一次
         """
         self.cache.save()
+
+    def clear_cache(self):
+        """
+        清除缓存
+        """
+        logger.info("开始清除站点缓存 ...")
+        self.cache.clear()
+        logger.info("站点缓存清除完成")

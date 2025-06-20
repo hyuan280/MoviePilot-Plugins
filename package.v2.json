@@ -23,11 +23,12 @@
     "name": "短剧自动识别",
     "description": "从TMDB、网站和站点识别短剧",
     "labels": "文件整理",
-    "version": "1.1",
+    "version": "1.2",
     "icon": "Amule_B.png",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.2": "增加清除缓存的按钮",
       "v1.1": "增加优先从TMDB识别，优化缓存逻辑",
       "v1.0": "添加红果免费短剧识别和站点识别"
     }

@@ -1,35 +1,20 @@
 import random
 import chardet
-import shutil
-import subprocess
-import threading
 import time
 import re
-import requests
 import pickle
 import traceback
 
 from threading import RLock
 from pathlib import Path
-from typing import Optional, Any, List, Dict, Tuple, Union
+from typing import Optional
 
-from lxml import etree
 from xpinyin import Pinyin
 
-from app.helper.sites import SitesHelper
 from app.core.meta import MetaBase
 from app.core.config import settings
 from app.core.context import MediaInfo
-from app.core.event import eventmanager, Event
-from app.modules import _ModuleBase
-from app.modules.filemanager import FileManagerModule
-from app.db.site_oper import SiteOper
 from app.log import logger
-from app.plugins import _PluginBase
-from app.schemas import TransferInfo
-from app.schemas.types import EventType, MediaType, NotificationType, ModuleType, MediaRecognizeType
-from app.schemas import TransferInfo, ExistMediaInfo, TmdbEpisode, TransferDirectoryConf, FileItem, StorageUsage
-from app.utils.system import SystemUtils
 from app.utils.http import RequestUtils
 
 
@@ -52,7 +37,7 @@ class PlayletCache():
     # 缓存文件路径
     _meta_path: Path = None
     # TMDB缓存过期
-    _tmdb_cache_expire: bool = True
+    _cache_expire: bool = True
 
     def __init__(self, name):
         self._meta_path = settings.TEMP_PATH / f"__playlet_{name}_cache__"
@@ -60,7 +45,7 @@ class PlayletCache():
 
     def clear(self):
         """
-        清空所有TMDB缓存
+        清空所有缓存
         """
         with lock:
             self._meta_data = {}
@@ -84,7 +69,7 @@ class PlayletCache():
                 if not expire or int(time.time()) < expire:
                     info[CACHE_EXPIRE_TIMESTAMP_STR] = int(time.time()) + EXPIRE_TIMESTAMP
                     self._meta_data[key] = info
-                elif expire and self._tmdb_cache_expire:
+                elif expire and self._cache_expire:
                     self.delete(key)
             return info or {}
 
@@ -176,7 +161,7 @@ class PlayletCache():
                     info[CACHE_EXPIRE_TIMESTAMP_STR] = int(time.time()) + EXPIRE_TIMESTAMP
                 elif int(time.time()) >= expire:
                     ret = True
-                    if self._tmdb_cache_expire:
+                    if self._cache_expire:
                         new_meta_data.pop(k)
         else:
             count = 0
@@ -189,7 +174,7 @@ class PlayletCache():
                     info[CACHE_EXPIRE_TIMESTAMP_STR] = int(time.time()) + EXPIRE_TIMESTAMP
                 elif int(time.time()) >= expire:
                     ret = True
-                    if self._tmdb_cache_expire:
+                    if self._cache_expire:
                         new_meta_data.pop(k)
                         count += 1
             if count >= 5:
@@ -388,7 +373,7 @@ def merge_mediainfo(old_mediainfo: MediaInfo, new_mediainfo: MediaInfo) -> Media
     if not old_mediainfo.tagline:
         old_mediainfo.tagline = new_mediainfo.tagline
     elif new_mediainfo.tagline:
-        old_mediainfo.tagline = list(set(old_mediainfo.tagline.split() + new_mediainfo.tagline.split()))
+        old_mediainfo.tagline = ' '.join(list(set(old_mediainfo.tagline.split() + new_mediainfo.tagline.split())))
 
     if not old_mediainfo.actors:
         old_mediainfo.actors = new_mediainfo.actors
