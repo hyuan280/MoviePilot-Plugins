@@ -24,6 +24,7 @@ from app.core.context import MediaInfo
 from app.core.event import eventmanager, Event
 from app.modules import _ModuleBase
 from app.modules.filemanager import FileManagerModule
+from app.modules.themoviedb import TheMovieDbModule
 from app.db.site_oper import SiteOper
 from app.log import logger
 from app.plugins import _PluginBase
@@ -35,17 +36,19 @@ from app.utils.http import RequestUtils
 
 from .hongguomodule import HongGuoModule
 from .sitemodule import SiteModule
+from .myutils import meta_search_tv_name
+from .myutils import merge_mediainfo
 
 
 class PlayletAutoRecognize(_PluginBase):
     # 插件名称
     plugin_name = "短剧自动识别"
     # 插件描述
-    plugin_desc = "从站点和网站识别短剧"
+    plugin_desc = "从TMDB、网站和站点识别短剧"
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -69,11 +72,13 @@ class PlayletAutoRecognize(_PluginBase):
     _recognize_srcs = {}
 
     _all_webs = {
+        TheMovieDbModule.get_name(): TheMovieDbModule(),
         HongGuoModule.get_name(): HongGuoModule()
     }
 
     def init_plugin(self, config: dict = None):
         self._site_infos = []
+        self._recognize_srcs = {}
 
         if config:
             self._enabled = config.get("enabled")
@@ -96,21 +101,14 @@ class PlayletAutoRecognize(_PluginBase):
             logger.info(f"即将从站点 {', '.join(site.name for site in self._site_infos)} 查找媒体信息")
 
         if self._searchwebs:
-            for _module_name, _module in self._all_webs.items():
-                if _module_name in self._searchwebs:
-                    if not self._recognize_srcs.get(_module_name):
-                        _module.init_module()
-                        if not _module.test():
-                            logger.error(f"{_module_name}网络连接失败")
-                            continue
-                        self._recognize_srcs[_module_name] = _module
-
-            # 检查识别源是否在选择的webs中，不在则删除
-            for src_name in self._recognize_srcs.keys():
-                if not src_name in self._searchwebs:
-                    self._recognize_srcs.pop(src_name)
-        else:
-            self._recognize_srcs = {}
+            for _module_name in self._searchwebs:
+                _module = self._all_webs.get(_module_name)
+                if _module:
+                    _module.init_module()
+                    if not _module.test():
+                        logger.error(f"{_module_name}网络连接失败")
+                        continue
+                    self._recognize_srcs[_module_name] = _module
 
         if self._searchsites:
             site_id_to_public_status = {site.get("id"): site.get("public") for site in SitesHelper().get_indexers()}
@@ -123,9 +121,6 @@ class PlayletAutoRecognize(_PluginBase):
                 _module = SiteModule(self._searchsites)
                 _module.init_module()
                 self._recognize_srcs[SiteModule.get_name()] = _module
-        else:
-            if self._recognize_srcs.get(SiteModule.get_name()):
-                self._recognize_srcs.pop(SiteModule.get_name())
 
         self._filemanager = FileManagerModule()
 
@@ -168,7 +163,24 @@ class PlayletAutoRecognize(_PluginBase):
         :param cache:    是否使用缓存
         :return: 识别的媒体信息，包括剧集信息
         """
-        logger.info(f"meta={meta}")
+        if not meta:
+            return None
+        if not meta.name:
+            logger.error("识别媒体信息时未提供元数据名称")
+            return None
+
+        if mtype:
+            meta.type = mtype
+
+        if meta.isfile and meta.type != MediaType.TV:
+            logger.error("短剧只识别电视剧")
+            return None
+
+        if meta.cn_name:
+            meta = meta_search_tv_name(meta, meta.cn_name)
+
+        logger.debug(f"{meta}")
+
         if self._onlyplaylet:
             if not meta.customization:
                 logger.info("没有识别词，跳过")
@@ -189,11 +201,21 @@ class PlayletAutoRecognize(_PluginBase):
             logger.warn(f"红果短剧只支持中文标题搜索")
             return None
 
+        result_sum = None
         for src_name,src in self._recognize_srcs.items():
             logger.debug(f"{src_name} 开始搜索...")
-            result = src.recognize_media(meta, mtype, tmdbid, doubanid, bangumiid, episode_group, cache)
+            try:
+                result = src.recognize_media(meta=meta, mtype=mtype, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+            except Exception as e:
+                logger.error(f"{src_name} 识别出错: {e}")
             if result:
-                return result
+                if not result_sum:
+                    result_sum = result
+                else:
+                    result_sum = merge_mediainfo(result_sum, result)
+
+        logger.info(f"result_sum:::{result_sum}")
+        return result_sum
 
     def __update_config(self):
         """

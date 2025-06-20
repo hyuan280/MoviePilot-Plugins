@@ -17,7 +17,6 @@ from app.utils.http import RequestUtils
 from app.db.site_oper import SiteOper
 
 from .myutils import get_page_source
-from .myutils import meta_search_tv_name
 from .myutils import PlayletCache, PlayletScraper
 
 class SiteApi():
@@ -34,7 +33,7 @@ class SiteApi():
 
     def __site_meta_update(self, meta, info, cover: bool = False):
         '''
-        补全站点搜索的元数据
+        使用元数据补全搜索到的媒体信息
         :param meta: 文件元数据
         :param info:站点搜索到的媒体元数据
         :param cover: 是否覆盖站点搜索的媒体元数据
@@ -70,13 +69,17 @@ class SiteApi():
         match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
         if match:
             title = match.group(1).strip().split('(')[0]
-            if name and name == title:
+        else:
+            title = tv_name.split('(')[0]
+
+        if name and name == title:
+            return True
+        elif len(name) > 6 and name in title:
                 return True
-            elif len(name) > 6 and name in title:
-                    return True
+
         return False
 
-    def __site_get_context(self, meta):
+    def __site_get_context(self, meta: MetaBase) -> dict:
         '''
         从站点搜索种子
         :param meta: 文件元数据
@@ -88,7 +91,7 @@ class SiteApi():
         if torrents:
             for torrent in torrents:
                 _context = torrent.to_dict()
-                logger.debug(f"context1: {_context}")
+                logger.debug(f"context1: {_context.get('meta_info').get('org_string')}")
                 if (meta.en_name and meta.en_name == _context.get('meta_info').get('en_name')) or (meta.cn_name and meta.cn_name == _context.get('meta_info').get('cn_name')):
                     _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'))
                     site_contexts.append(_context)
@@ -108,7 +111,7 @@ class SiteApi():
             if torrents:
                 for torrent in torrents:
                     _context = torrent.to_dict()
-                    logger.debug(f"context2: {_context}")
+                    logger.debug(f"context2: {_context.get('meta_info').get('org_string')}")
                     if meta.en_name == _context.get('meta_info').get('en_name') or meta.cn_name == _context.get('meta_info').get('cn_name'):
                         _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'))
                         site_contexts.append(_context)
@@ -119,6 +122,8 @@ class SiteApi():
             else:
                 self._search_error_cache[meta.cn_name] = self._search_error_cache.get(meta.cn_name) + 1
                 return {}
+
+        logger.debug(f"site_contexts={site_contexts}")
 
         site_contexts_year = []
         if len(site_contexts) == 0:
@@ -209,7 +214,7 @@ class SiteApi():
 
         return html
 
-    def search(self, meta):
+    def search(self, meta: MetaBase):
         '''
         从站点识别媒体信息
         :param meta: 文件元数据
@@ -224,7 +229,7 @@ class SiteApi():
         if not brief_texts:
             return None
 
-        logger.debug(f"{brief_texts}")
+        logger.debug(f"brief_texts={brief_texts}")
 
         img_url = None
         images = brief_texts[0].xpath(".//img[1]/@src")
@@ -285,8 +290,8 @@ class SiteApi():
         mediainfo.number_of_episodes = context.get('meta_info').get('total_episode')
         mediainfo.number_of_seasons = context.get('meta_info').get('total_season')
         mediainfo.overview = brief
-        #mediainfo.mediaid_prefix = context.get('torrent_info').get('site_name')
-        #mediainfo.media_id = context.get('torrent_info').get('site')
+        mediainfo.mediaid_prefix = context.get('torrent_info').get('site_name')
+        mediainfo.media_id = context.get('torrent_info').get('site')
         mediainfo.release_date = context.get('torrent_info').get('pubdate')
         mediainfo.tagline = ' '.join(tags) if tags else None
         mediainfo.actors = actors
@@ -312,7 +317,7 @@ class SiteModule(_ModuleBase):
     def init_module(self) -> None:
         self.site = SiteApi(self._searchsites)
         self.scraper = PlayletScraper()
-        self.cache = PlayletCache()
+        self.cache = PlayletCache('site')
 
     def stop(self):
         self.cache.save()
@@ -359,39 +364,24 @@ class SiteModule(_ModuleBase):
         :return: 识别的媒体信息，包括剧集信息
         """
         mediainfos = []
-        if not meta:
-            return None
-        if not meta.name:
-            logger.error("识别媒体信息时未提供元数据名称")
-            return None
-
-        if mtype:
-            meta.type = mtype
-
-        if meta.isfile and meta.type != MediaType.TV:
-            logger.error("站点短剧只识别电视剧")
-            return None
-
-        if meta.cn_name:
-            meta = meta_search_tv_name(meta, meta.cn_name)
-
         if cache:
             # 读取缓存
             cache_info = self.cache.get(meta)
             if cache_info:
                 cache_data = cache_info.get('data')
-                if cache_data.title == meta.cn_name:
+                if not cache_data:
+                    if cache_info.get("error") >= 3:
+                        return None
+                elif cache_data.title == meta.cn_name:
                     mediainfos = [cache_data]
 
         if not mediainfos:
             mediainfos = self.site.search(meta)
 
+        logger.debug(f"mediainfos={mediainfos}")
+
         if not mediainfos:
-            return None
-
-        logger.debug(f"{mediainfos}")
-
-        if len(mediainfos) == 0:
+            self.cache.update(meta, None)
             return None
 
         _mediainfo: MediaInfo = mediainfos[0]

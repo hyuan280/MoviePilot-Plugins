@@ -44,6 +44,7 @@ class PlayletCache():
     {
         "title": '',
         "year": '',
+        "error": 0,
         "detail_link": '',
     }
     """
@@ -53,8 +54,8 @@ class PlayletCache():
     # TMDB缓存过期
     _tmdb_cache_expire: bool = True
 
-    def __init__(self):
-        self._meta_path = settings.TEMP_PATH / "__playlet_cache__"
+    def __init__(self, name):
+        self._meta_path = settings.TEMP_PATH / f"__playlet_{name}_cache__"
         self._meta_data = self.__load(self._meta_path)
 
     def clear(self):
@@ -126,7 +127,21 @@ class PlayletCache():
                 self._meta_data[self.__get_key(meta)] = {
                         "year": cache_year,
                         "title": cache_title,
+                        "error": 0,
                         "data": data,
+                        CACHE_EXPIRE_TIMESTAMP_STR: int(time.time()) + EXPIRE_TIMESTAMP
+                    }
+            else:
+                cache_title = meta.cn_name if meta.cn_name else meta.en_name
+                if self._meta_data.get(self.__get_key(meta)):
+                    error = self._meta_data.get(self.__get_key(meta)).get('error') + 1
+                else:
+                    error = 1
+                self._meta_data[self.__get_key(meta)] = {
+                        "year": None,
+                        "title": cache_title,
+                        "error": error,
+                        "data": None,
                         CACHE_EXPIRE_TIMESTAMP_STR: int(time.time()) + EXPIRE_TIMESTAMP
                     }
 
@@ -136,7 +151,7 @@ class PlayletCache():
         """
 
         meta_data = self.__load(self._meta_path)
-        new_meta_data = self._meta_data
+        new_meta_data = {k: v for k, v in self._meta_data.items() if v.get("data")}
 
         if not force \
                 and not self._random_sample(new_meta_data) \
@@ -206,7 +221,7 @@ class PlayletScraper():
 
 
 
-def chinese_season_to_number(chinese_season):
+def chinese_season_to_number(chinese_season) -> int:
     '''
     转换中文季为数字
     :param chinese_season: 中文季字符串
@@ -238,7 +253,7 @@ def chinese_season_to_number(chinese_season):
 
     return number
 
-def get_page_source(url: str, session = None, cookies = None, proxies = None, timeout: int = 5):
+def get_page_source(url: str, session = None, cookies = None, proxies = None, timeout: int = 5) -> str:
     """
     获取页面资源
     """
@@ -273,7 +288,10 @@ def get_page_source(url: str, session = None, cookies = None, proxies = None, ti
     #logger.debug(f"请求网页：{page_source}")
     return page_source
 
-def _to_pinyin_with_title(s):
+def _to_pinyin_with_title(s: str) -> str:
+    '''
+    中文标题转拼音英文标题
+    '''
     if not s:
         return ""
 
@@ -284,7 +302,10 @@ def _to_pinyin_with_title(s):
 
     return ' '.join(pinyin_list).replace('，', ',')
 
-def meta_search_tv_name(file_meta, tv_name: str):
+def meta_search_tv_name(file_meta: MetaBase, tv_name: str) -> MetaBase:
+    '''
+    针对短剧识别标题
+    '''
     tv_name = tv_name.strip('.')
     tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
     tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
@@ -328,11 +349,54 @@ def meta_search_tv_name(file_meta, tv_name: str):
         subtitle = tv_name
 
     file_meta.org_string = title
-    file_meta.subtitle = subtitle
+    if not file_meta.subtitle:
+        file_meta.subtitle = subtitle
     file_meta.cn_name = title
     file_meta.en_name = _to_pinyin_with_title(title)
     file_meta.begin_season = 1
     file_meta.total_season = 1
     file_meta.total_episode = episodes
-    logger.info(f"file_meta={file_meta}")
+
     return file_meta
+
+def merge_mediainfo(old_mediainfo: MediaInfo, new_mediainfo: MediaInfo) -> MediaInfo:
+    '''
+    合并两个媒体信息
+    '''
+    if not old_mediainfo.en_title:
+        old_mediainfo.en_title = new_mediainfo.en_title
+    if not old_mediainfo.year:
+        old_mediainfo.year = new_mediainfo.year
+    if not old_mediainfo.season:
+        old_mediainfo.season = new_mediainfo.season
+    if not old_mediainfo.original_title:
+        old_mediainfo.original_title = new_mediainfo.original_title
+    if not old_mediainfo.backdrop_path:
+        old_mediainfo.backdrop_path = new_mediainfo.backdrop_path
+    if not old_mediainfo.poster_path:
+        old_mediainfo.poster_path = new_mediainfo.poster_path
+    if not old_mediainfo.number_of_episodes:
+        old_mediainfo.number_of_episodes = new_mediainfo.number_of_episodes
+    if not old_mediainfo.number_of_seasons:
+        old_mediainfo.number_of_seasons = new_mediainfo.number_of_seasons
+
+    if not old_mediainfo.overview or (old_mediainfo.overview == '暂无简介' and new_mediainfo.overview):
+        old_mediainfo.overview = new_mediainfo.overview
+    if not old_mediainfo.release_date:
+        old_mediainfo.release_date = new_mediainfo.release_date
+
+    if not old_mediainfo.tagline:
+        old_mediainfo.tagline = new_mediainfo.tagline
+    elif new_mediainfo.tagline:
+        old_mediainfo.tagline = list(set(old_mediainfo.tagline.split() + new_mediainfo.tagline.split()))
+
+    if not old_mediainfo.actors:
+        old_mediainfo.actors = new_mediainfo.actors
+    elif new_mediainfo.actors:
+        old_actor_name = [_a.get('name') for _a in old_mediainfo.actors]
+        for _a in new_mediainfo.actors:
+            _name = _a.get('name')
+            if not _name in old_actor_name:
+                old_mediainfo.actors.append(_a)
+
+    return old_mediainfo

@@ -16,7 +16,6 @@ from app.utils.http import RequestUtils
 
 from .myutils import chinese_season_to_number
 from .myutils import get_page_source
-from .myutils import meta_search_tv_name
 from .myutils import PlayletCache, PlayletScraper
 #
 # 红果免费短剧 识别api（网页版）
@@ -30,11 +29,10 @@ class HongGuoApi():
         self._search_url = self.__get_search_url()
         self._session = requests.Session()
 
-    def __get_search_url(self):
+    def __get_search_url(self) -> str:
         """
         从首页获取搜索url
         """
-        return "https://www.hgdj.app/vodsearch/-------------.html"
         page_source = get_page_source(self._base_url, self._session)
 
         if not page_source:
@@ -52,7 +50,7 @@ class HongGuoApi():
 
         return f"{self._base_url}{search_action[0]}"
 
-    def __get_mediainfo(self, detail_url):
+    def __get_mediainfo(self, detail_url: str) -> MediaInfo:
         page_source = get_page_source(detail_url, self._session)
         if not page_source:
             logger.warn(f"请求无效数据：{detail_url}")
@@ -125,10 +123,10 @@ class HongGuoApi():
         logger.info(f"mediainfo={mediainfo}")
         return mediainfo
 
-    def search(self, meta):
+    def search(self, title: str):
         mediainfos = []
-        logger.info(f"红果短剧搜索：{meta.cn_name} ...")
-        page_source = get_page_source(f"{self._search_url}?wd={meta.cn_name}&submit=", self._session)
+        logger.info(f"红果短剧搜索：{title} ...")
+        page_source = get_page_source(f"{self._search_url}?wd={title}&submit=", self._session)
         if not page_source:
             logger.warn("网站没有请求到数据")
             return None
@@ -139,7 +137,7 @@ class HongGuoApi():
 
         search_items = html.xpath('//div[@class="hl-item-content"]//a[@class="hl-btn-border"]/@href')
         if not search_items:
-            logger.info(f"红果短剧没有 {meta.cn_name}")
+            logger.info(f"红果短剧没有 {title}")
             return None
 
         for item in search_items:
@@ -175,7 +173,7 @@ class HongGuoModule(_ModuleBase):
     def init_module(self) -> None:
         self.hongguo = HongGuoApi()
         self.scraper = PlayletScraper()
-        self.cache = PlayletCache()
+        self.cache = PlayletCache('hongguo')
 
     def stop(self):
         self.cache.save()
@@ -205,8 +203,6 @@ class HongGuoModule(_ModuleBase):
     def get_priority() -> int:
         return 0
 
-
-
     def recognize_media(self, meta: MetaBase = None,
                         mtype: Optional[MediaType] = None,
                         tmdbid: Optional[int] = None,
@@ -226,50 +222,33 @@ class HongGuoModule(_ModuleBase):
         :return: 识别的媒体信息，包括剧集信息
         """
         mediainfos = []
-        if not meta:
-            return None
-        if not meta.name:
-            logger.error("识别媒体信息时未提供元数据名称")
-            return None
-
-        if mtype:
-            meta.type = mtype
-
-        if meta.isfile and meta.type != MediaType.TV:
-            logger.error("短剧短剧只识别电视剧")
-            return None
-
-        if meta.cn_name:
-            meta = meta_search_tv_name(meta, meta.cn_name)
-
         # 网页版不支持特殊字符搜索，删除特殊字符
-        meta.cn_name = re.sub('[ ，,：:]', '', meta.cn_name)
+        search_name = re.sub('[ ，,：:]', '', meta.cn_name)
 
         if cache:
             # 读取缓存
             cache_info = self.cache.get(meta)
             if cache_info:
                 cache_data = cache_info.get('data')
-                if cache_data.title == meta.cn_name:
+                if not cache_data:
+                    if cache_info.get("error") >= 3:
+                        return None
+                elif cache_data.title == search_name:
                     mediainfos = [cache_data]
 
-        logger.info(f"1--{mediainfos}")
+        if not mediainfos:
+            mediainfos = self.hongguo.search(search_name)
+
+        logger.debug(f"mediainfos={mediainfos}")
 
         if not mediainfos:
-            mediainfos = self.hongguo.search(meta)
-
-        if not mediainfos:
-            return None
-
-        logger.info(f"2--{mediainfos}")
-
-        if len(mediainfos) == 0:
+            self.cache.update(meta, None)
             return None
 
         _mediainfo: MediaInfo = mediainfos[0]
         if len(mediainfos) > 1:
             for _m in mediainfos:
-                if _m.title == meta.cn_name:
+                if _m.title == search_name:
                     _mediainfo = _m
                     break
 

@@ -21,13 +21,14 @@
   },
   "PlayletAutoRecognize" : {
     "name": "短剧自动识别",
-    "description": "从站点和网站识别短剧",
+    "description": "从TMDB、网站和站点识别短剧",
     "labels": "文件整理",
-    "version": "1.0",
+    "version": "1.1",
     "icon": "Amule_B.png",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.1": "增加优先从TMDB识别，优化缓存逻辑",
       "v1.0": "添加红果免费短剧识别和站点识别"
     }
   }
