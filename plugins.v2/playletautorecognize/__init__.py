@@ -25,7 +25,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -176,7 +176,9 @@ class PlayletAutoRecognize(_PluginBase):
                 logger.info("没有短剧关键词，跳过")
                 return None
             is_continue = False
-            for keyword in self._playlet_keywords.split("\n"):
+            keywords = self._playlet_keywords.split("\n")
+            keywords.append("短剧")
+            for keyword in keywords:
                 if keyword in meta.customization.split('@'):
                     is_continue = True
                     break
@@ -201,7 +203,10 @@ class PlayletAutoRecognize(_PluginBase):
                 else:
                     result_sum = merge_mediainfo(result_sum, result)
 
-        logger.info(f"result_sum:::{result_sum}")
+        if result_sum and self._onlyplaylet:
+            result_sum.category = '短剧'
+
+        logger.debug(f"result_sum:{result_sum}")
         return result_sum
 
     def __update_config(self):
@@ -369,7 +374,7 @@ class PlayletAutoRecognize(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '短剧关键词 配置说明: 在mp设置自定义识别词，然后这里配置同样的词，可以是你短剧的保存目录名，需要注意mp只识别文件的上两层目录，短剧路径过深会识别不到'
+                                            'text': '短剧关键词 配置说明: 在mp设置自定义占位符，然后这里配置同样的词，可以是你短剧的保存目录名，需要注意mp只识别文件的上两层目录，短剧路径过深会识别不到'
                                         }
                                     }
                                 ]
@@ -390,7 +395,7 @@ class PlayletAutoRecognize(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '整理默认分类是“短剧”，请开启二级分类的配置“短剧”自定义识别词'
+                                            'text': '整理默认二级分类是“短剧”，开始只识别短剧，所有识别的电视剧都会被分类为“短剧”'
                                         }
                                     }
                                 ]
