@@ -113,8 +113,7 @@ class HongGuoApi():
                     mediainfo.directors = [_s.strip() for _s in directors]
             elif k == '主演':
                 if v != '未知':
-                    actors = v.split('/')
-                    mediainfo.actors = [_s.strip() for _s in actors]
+                    mediainfo.actors = [{ 'name': elem.strip(), 'type': 'Actor' } for elem in v.split('/')]
 
         mediainfo.tagline = ' '.join(tags) if tags else None
         mediainfo.mediaid_prefix = 'hongguo'
