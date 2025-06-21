@@ -62,7 +62,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.0"
+    plugin_version = "2.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -555,7 +555,7 @@ class PlayletPolishScrape(_PluginBase):
 
             except Exception as e:
                 logger.error(f"{event_path} 刮削失败, 请重新配置运行插件: {e}")
-                self.stop_service()
+                self._is_stoped = True
                 return
 
             # 查看tv_path路径下是否有jpg文件
@@ -591,7 +591,7 @@ class PlayletPolishScrape(_PluginBase):
                 self._medias[mediainfo.title_year] = media_list
         except Exception as e:
             logger.error(f"event_handler_created error: {e}")
-            print(str(e))
+            self._is_stoped = True
 
     def __scrape_all_img(self, thumb_path, transferinfo, season: int = 1, scraping_switchs: dict = None):
         '''
@@ -649,7 +649,7 @@ class PlayletPolishScrape(_PluginBase):
         scraping_switchs = MediaChain._get_scraping_switchs()
         if scraping_switchs.get('tv_nfo'):
             if not os.path.exists(f"{tv_path}/tvshow.nfo"):
-                self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline, mediainfo.actors)
+                self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline.split(), mediainfo.actors)
         if scraping_switchs.get('season_nfo'):
             if not os.path.exists(f"{se_path}/season.nfo"):
                 self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
@@ -932,6 +932,8 @@ class PlayletPolishScrape(_PluginBase):
         # 支持的图片文件格式
         image_extensions = (".jpg", ".jpeg", ".png")
 
+        if not os.path.isdir(dir_path):
+            dir_path = Path(dir_path).parent
         # 遍历目录中的文件
         for filename in os.listdir(dir_path):
             file_path = os.path.join(dir_path, filename)
@@ -1330,7 +1332,6 @@ class PlayletPolishScrape(_PluginBase):
         """
         退出插件
         """
-        self._is_stoped = True
         try:
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
@@ -1338,6 +1339,7 @@ class PlayletPolishScrape(_PluginBase):
                     self._scheduler.shutdown()
                 self._scheduler = None
         except Exception as e:
+            self._scheduler = None
             logger.error(f"退出插件失败：{e}")
 
         if self._observer:

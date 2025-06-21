@@ -240,7 +240,7 @@ class SiteApi():
         brief_text = brief_texts[0].xpath("string()").strip()
         brief = None
         if brief_text and len(brief_text) > 5:
-            brief_match = re.search(r'◎简\s*介\s*([^◎]*)', brief_text)
+            brief_match = re.search(r'简\s*介\s*[：:]([^◎]*)', brief_text)
             if brief_match:
                 brief = brief_match.group(1).strip()
             else:
@@ -252,7 +252,7 @@ class SiteApi():
             subtitle_strs = subtitle.split('|')
             for s in subtitle_strs:
                 if '类型' in s:
-                    tags = s.replace('类型', '').replace(':', '').replace('：', '').split()
+                    tags = s.replace('类型', '').replace(':', '').replace('：', '').replace('/', ' ').split()
         if 'labels' in context.get('torrent_info').keys():
             for _l in context.get('torrent_info').get('labels'):
                 if '禁转' in _l or '官方' in _l or '短剧' in _l or re.search(r'\d+[月天时分]', _l):

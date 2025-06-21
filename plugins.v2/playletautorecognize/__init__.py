@@ -25,7 +25,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.3.1"
+    plugin_version = "1.3.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -39,7 +39,7 @@ class PlayletAutoRecognize(_PluginBase):
 
     # 私有属性
     _enabled = False
-    _clear_cache = False
+    _clearcache = False
     _onlyplaylet = True
     _filemanager = None
     _playlet_keywords = ""
@@ -60,19 +60,13 @@ class PlayletAutoRecognize(_PluginBase):
 
         if config:
             self._enabled = config.get("enabled")
-            self._clear_cache = config.get("clear_cache")
+            self._clearcache = config.get("clearcache")
             self._onlyplaylet = config.get("onlyplaylet")
             self._playlet_keywords = config.get("playlet_keywords")
             self._searchwebs = config.get("searchwebs", [])
             self._searchsites = config.get("searchsites", [])
 
         logger.info(f"插件使能：{self._enabled}")
-        if self._clear_cache:
-            for _module_name in self._all_webs:
-                _module = self._all_webs.get(_module_name)
-                if _module:
-                    _module.clear_cache()
-            self._clear_cache = False
 
         if self._searchsites:
             site_id_to_public_status = {site.get("id"): site.get("public") for site in SitesHelper().get_indexers()}
@@ -80,12 +74,8 @@ class PlayletAutoRecognize(_PluginBase):
                 site_id for site_id in self._searchsites
                 if site_id in site_id_to_public_status and not site_id_to_public_status[site_id]
             ]
-        # 更新配置
-        self.__update_config()
 
         if not self._enabled:
-            # 清除数据
-            self._recognize_srcs = {}
             return
 
         for siteid in self._searchsites:
@@ -111,7 +101,16 @@ class PlayletAutoRecognize(_PluginBase):
                 _module.init_module()
                 self._recognize_srcs[SiteModule.get_name()] = _module
 
+        if self._clearcache:
+            for _,src in self._recognize_srcs.items():
+                if src:
+                    src.clear_cache()
+            self._clearcache = False
+
         self._filemanager = FileManagerModule()
+
+        # 更新配置
+        self.__update_config()
 
     def get_module(self) -> Dict[str, Any]:
         if not self._enabled:
@@ -219,6 +218,7 @@ class PlayletAutoRecognize(_PluginBase):
             "playlet_keywords": self._playlet_keywords,
             "searchwebs": self._searchwebs,
             "searchsites": self._searchsites,
+            "clearcache": self._clearcache,
         })
 
     def scheduler_job(self):

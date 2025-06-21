@@ -67,8 +67,12 @@ class HongGuoApi():
 
         # 获取媒体信息
         img_elements = html.xpath('//div[@class="conch-content"]//div[contains(@class, "hl-dc-pic")]//span[contains(@class, "hl-item-thumb")]/@data-original')
+        logger.info(f"img_elements={img_elements}")
         if img_elements:
-            mediainfo.poster_path = f"{self._base_url}{img_elements[0]}"
+            if img_elements[0].startswith('http'):
+                mediainfo.poster_path = img_elements[0]
+            else:
+                mediainfo.poster_path = f"{self._base_url}{img_elements[0]}"
             mediainfo.backdrop_path = mediainfo.poster_path
         li_elements = html.xpath('//div[@class="hl-dc-content"]//div[contains(@class, "hl-full-box")]/ul//li')
         if li_elements:
@@ -76,7 +80,7 @@ class HongGuoApi():
                 em_text = li_element.xpath('./em')[0].text
                 li_text = li_element.xpath('string(.)')
 
-                result_dict[em_text.replace('：', '').strip()] = li_text.replace(em_text, '').strip()
+                result_dict[em_text.replace('：', '').strip()] = li_text.replace(em_text, '').replace('/', ' ').strip().split()
 
         logger.info(f"result_dict={result_dict}")
 
@@ -103,17 +107,17 @@ class HongGuoApi():
                     mediainfo.release_date = v
             elif k == '类型':
                 if v != '未知':
-                    tags.append(v)
+                    tags.append(v.split())
             elif k == '语言':
                 if v != '未知':
                     mediainfo.original_language = v
             elif k == '导演':
-                if v != '未知':
-                    directors = v.split('/')
+                if v != '未知' and v != '暂无':
+                    directors = v.split()
                     mediainfo.directors = [_s.strip() for _s in directors]
             elif k == '主演':
-                if v != '未知':
-                    mediainfo.actors = [{ 'name': elem.strip(), 'type': 'Actor' } for elem in v.split('/')]
+                if v != '未知' and v != '暂无':
+                    mediainfo.actors = [{ 'name': elem.strip(), 'type': 'Actor' } for elem in v.split()]
 
         mediainfo.tagline = ' '.join(tags) if tags else None
         mediainfo.mediaid_prefix = 'hongguo'
@@ -139,7 +143,10 @@ class HongGuoApi():
             return None
 
         for item in search_items:
-            detail_url = f"{self._base_url}{item}"
+            if item.startswith('http'):
+                detail_url = item
+            else:
+                detail_url = f"{self._base_url}{item}"
             _mediainfo = self.__get_mediainfo(detail_url)
             if _mediainfo:
                 mediainfos.append(_mediainfo)
@@ -246,7 +253,7 @@ class HongGuoModule(_ModuleBase):
         _mediainfo: MediaInfo = mediainfos[0]
         if len(mediainfos) > 1:
             for _m in mediainfos:
-                if _m.title == search_name:
+                if _m.title == search_name or ('短剧' in _m.title and search_name in _m.title):
                     _mediainfo = _m
                     break
 

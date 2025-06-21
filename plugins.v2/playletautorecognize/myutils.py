@@ -319,7 +319,6 @@ def meta_search_tv_name(file_meta: MetaBase, tv_name: str) -> MetaBase:
 
     if '-' in file_meta.org_string:
         ep_match = re.search(r'(\d+)-(\d+)', file_meta.org_string)
-        logger.info(f"从文件名中提取集数：{ep_match}")
         if ep_match:
             try:
                 file_meta.begin_episode = int(ep_match.group(1))
