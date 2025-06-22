@@ -19,7 +19,6 @@ from .myutils import PlayletCache, PlayletScraper
 
 class SiteApi():
     _searchsites = []
-    _search_error_cache = {}
 
     def __init__(self, searchsites):
         self._searchsites = searchsites
@@ -90,45 +89,48 @@ class SiteApi():
             for torrent in torrents:
                 _context = torrent.to_dict()
                 logger.debug(f"context1: {_context.get('meta_info').get('org_string')}")
-                if (meta.en_name and meta.en_name == _context.get('meta_info').get('en_name')) or (meta.cn_name and meta.cn_name == _context.get('meta_info').get('cn_name')):
+                meta_cn_name = _context.get('meta_info').get('cn_name')
+                meta_cn_name = meta_cn_name.replace('$', ' ').replace('&', ' ').strip() if meta_cn_name else None
+                meta_en_name = _context.get('meta_info').get('en_name')
+                meta_en_name = meta_en_name.replace('$', ' ').replace('&', ' ').strip() if meta_en_name else None
+                if (meta.en_name and meta.en_name == meta_en_name) or (meta.cn_name and meta.cn_name == meta_cn_name):
                     _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'))
                     site_contexts.append(_context)
                 else:
-                    if self.__site_comparison_meta(meta.cn_name, _context.get('meta_info').get('org_string')):
+                    meta_org_name = _context.get('meta_info').get('org_string')
+                    meta_org_name = meta_org_name.replace('$', ' ').replace('&', ' ').strip() if meta_org_name else None
+                    if self.__site_comparison_meta(meta.cn_name, meta_org_name):
                         _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
                         site_contexts.append(_context)
         if len(site_contexts) == 0:
-            if meta.cn_name in self._search_error_cache.keys():
-                if self._search_error_cache.get(meta.cn_name) > self._error_count:
-                    logger.warn(f"种子访问失败次数超过{self._error_count}次：{meta.cn_name}")
-                    return {}
-            else:
-                self._search_error_cache[meta.cn_name] = 0
-
             torrents = SearchChain().search_by_title(title=meta.cn_name, sites=self._searchsites, cache_local=True)
             if torrents:
                 for torrent in torrents:
                     _context = torrent.to_dict()
                     logger.debug(f"context2: {_context.get('meta_info').get('org_string')}")
-                    if meta.en_name == _context.get('meta_info').get('en_name') or meta.cn_name == _context.get('meta_info').get('cn_name'):
+                    meta_cn_name = _context.get('meta_info').get('cn_name')
+                    meta_cn_name = meta_cn_name.replace('$', ' ').replace('&', ' ').strip() if meta_cn_name else None
+                    meta_en_name = _context.get('meta_info').get('en_name')
+                    meta_en_name = meta_en_name.replace('$', ' ').replace('&', ' ').strip() if meta_en_name else None
+                    if (meta.en_name and meta.en_name == meta_en_name) or (meta.cn_name and meta.cn_name == meta_cn_name):
                         _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'))
                         site_contexts.append(_context)
                     else:
-                        if self.__site_comparison_meta(meta.cn_name, _context.get('meta_info').get('org_string')):
+                        meta_org_name = _context.get('meta_info').get('org_string')
+                        meta_org_name = meta_org_name.replace('$', ' ').replace('&', ' ').strip() if meta_org_name else None
+                        if self.__site_comparison_meta(meta.cn_name, meta_org_name):
                             _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
+
                             site_contexts.append(_context)
             else:
-                self._search_error_cache[meta.cn_name] = self._search_error_cache.get(meta.cn_name) + 1
                 return {}
 
         logger.debug(f"site_contexts={site_contexts}")
 
         site_contexts_year = []
         if len(site_contexts) == 0:
-            self._search_error_cache[meta.cn_name] = self._search_error_cache.get(meta.cn_name) + 1
             return {}
 
-        self._search_error_cache[meta.cn_name] = 0
         if len(site_contexts) == 1:
             return site_contexts[0]
         else:

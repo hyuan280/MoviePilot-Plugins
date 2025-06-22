@@ -25,7 +25,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.3.2"
+    plugin_version = "1.3.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -169,10 +169,10 @@ class PlayletAutoRecognize(_PluginBase):
 
         if self._onlyplaylet:
             if not meta.customization:
-                logger.info(f"{meta.name} 没有识别词，跳过")
+                logger.debug(f"{meta.name} 没有识别词，跳过")
                 return None
             if not self._playlet_keywords:
-                logger.info(f"{meta.name} 没有短剧关键词，跳过")
+                logger.debug(f"{meta.name} 没有短剧关键词，跳过")
                 return None
             is_continue = False
             keywords = self._playlet_keywords.split("\n")
@@ -182,7 +182,7 @@ class PlayletAutoRecognize(_PluginBase):
                     is_continue = True
                     break
             if not is_continue:
-                logger.info(f"{meta.name} 识别词不是短剧关键词，跳过")
+                logger.debug(f"{meta.name} 识别词不是短剧关键词，跳过")
                 return None
 
         if not meta.cn_name:

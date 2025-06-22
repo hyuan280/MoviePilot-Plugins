@@ -2,6 +2,7 @@ import datetime
 import os
 import re
 import threading
+import concurrent.futures
 from pathlib import Path
 from threading import Lock
 from typing import Any, List, Dict, Tuple, Optional
@@ -62,7 +63,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.0.2"
+    plugin_version = "2.0.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -100,6 +101,7 @@ class PlayletPolishScrape(_PluginBase):
     _search_error_cache = {}
     _name_error_cache = {}
     _is_stoped = False
+    _thread_pool = None
 
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
@@ -133,6 +135,8 @@ class PlayletPolishScrape(_PluginBase):
 
         if self._enabled or self._onlyonce:
             self._is_stoped = False
+            # 线程池
+            self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=6)
             # 定时服务
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
             if self._notify:
@@ -166,7 +170,7 @@ class PlayletPolishScrape(_PluginBase):
                             self.systemmessage.put(f"{target_dir} 是下载目录 {source_dir} 的子目录，无法监控")
                             continue
                     except Exception as e:
-                        logger.debug(str(e))
+                        logger.debug(f"无法监控 {e}")
                         pass
 
                     try:
@@ -219,27 +223,31 @@ class PlayletPolishScrape(_PluginBase):
         :return: 是否pass
         """
 
-        if self._link_pass:
-            # 检查是否是文件而且是硬链接
-            if os.path.isfile(path_str):
-                # 检查是否是硬链接
-                if os.stat(path_str).st_nlink > 1:
-                    #logger.debug(f"{path_str} 硬链接已整理，跳过处理")
-                    return True
+        try:
+            if self._link_pass:
+                # 检查是否是文件而且是硬链接
+                if os.path.isfile(path_str):
+                    # 检查是否是硬链接
+                    if os.stat(path_str).st_nlink > 1:
+                        #logger.debug(f"{path_str} 硬链接已整理，跳过处理")
+                        return True
 
-        # 过滤关键字
-        if self._polish_keywords:
-            for keyword in self._polish_keywords.split("\n"):
-                if keyword and re.findall(keyword, path_str):
-                    return False
-            #logger.debug(f"{path_str} 未命中整理关键字，跳过处理")
+            # 过滤关键字
+            if self._polish_keywords:
+                for keyword in self._polish_keywords.split("\n"):
+                    if keyword and re.findall(keyword, path_str):
+                        return False
+                #logger.debug(f"{path_str} 未命中整理关键字，跳过处理")
+                return True
+
+            if self._exclude_keywords:
+                for keyword in self._exclude_keywords.split("\n"):
+                    if keyword and re.findall(keyword, path_str):
+                        #logger.debug(f"{path_str} 命中过滤关键字 {keyword}，跳过处理")
+                        return True
+        except Exception as e:
+            logger.error(f"跳过，因为检查路径是否需要跳过出错了：{e}")
             return True
-
-        if self._exclude_keywords:
-            for keyword in self._exclude_keywords.split("\n"):
-                if keyword and re.findall(keyword, path_str):
-                    #logger.debug(f"{path_str} 命中过滤关键字 {keyword}，跳过处理")
-                    return True
 
         return False
 
@@ -255,11 +263,9 @@ class PlayletPolishScrape(_PluginBase):
                 if self._is_stoped:
                     return
 
-                try:
-                    if self.__is_check_pass(str(file_path)):
-                        continue
-                except Exception as e:
-                    logger.debug(f"e={e}")
+                if self.__is_check_pass(str(file_path)):
+                    continue
+
                 self.__handle_file(is_directory=Path(file_path).is_dir(),
                                    event_path=str(file_path),
                                    source_dir=mon_path)
@@ -355,6 +361,8 @@ class PlayletPolishScrape(_PluginBase):
         else:
             subtitle = tv_name
 
+        title = title.replace('$', ' ').replace('&', ' ').strip()
+
         file_meta.org_string = title
         file_meta.subtitle = subtitle
         file_meta.cn_name = title
@@ -389,7 +397,7 @@ class PlayletPolishScrape(_PluginBase):
             tv_path = parent_dir.parent
             tv_name = tv_path.name
             file_meta = self.__meta_search_tv_name(file_meta, tv_name, True)
-        elif re.search(r'^\d+(-\d+)?([集话]|本季完|完结|最终集|大结局)?$', file_meta.org_string) or re.search(r'^\d+-.*-$', file_meta.org_string):
+        elif re.search(r'^\d+(-\d+)?([集话]|本季完|完结|最终集|大结局)?$', file_meta.org_string) or re.search(r'^\d+-\d+-.*', file_meta.org_string):
             if is_directory:
                 logger.warn(f"单独的数字目录，不处理：{media_path}")
                 return None
@@ -436,7 +444,7 @@ class PlayletPolishScrape(_PluginBase):
         :param event_path: 事件文件路径
         :param source_dir: 监控目录
         """
-
+        logger.info(f"开始处理媒体文件：{event_path}")
         # 整理成功的不再处理
         if not self._force:
             transferd = self._transferhis.get_by_src(event_path, storage=self._storage_type)
@@ -514,8 +522,8 @@ class PlayletPolishScrape(_PluginBase):
                     transferinfo: TransferInfo = TransferInfo()
                     transferinfo.success = True
                     transferinfo.transfer_type = self._transfer_type
-                    transferinfo.target_diritem = StorageChain().get_file_item(self._storage_type, Path(event_path).parent)
-                    transferinfo.target_item = fileitem
+                    transferinfo.target_item = StorageChain().get_file_item(self._storage_type, Path(fileitem.path).parent)
+                    transferinfo.target_diritem = StorageChain().get_file_item(self._storage_type, Path(transferinfo.target_item.path).parent)
                 else:
                     _end_episode = file_meta.end_episode # 传输会将end_episode清空，先保存
                     transferinfo: TransferInfo = self.chain.transfer(mediainfo=mediainfo,
@@ -648,16 +656,21 @@ class PlayletPolishScrape(_PluginBase):
         else:
             episode = -1
 
-        scraping_switchs = MediaChain._get_scraping_switchs()
-        if scraping_switchs.get('tv_nfo'):
-            if not os.path.exists(f"{tv_path}/tvshow.nfo"):
-                self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.tagline.split(), mediainfo.actors)
-        if scraping_switchs.get('season_nfo'):
-            if not os.path.exists(f"{se_path}/season.nfo"):
-                self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
-        if scraping_switchs.get('episode_nfo'):
-            if not os.path.exists(f"{se_path}/{name}.nfo"):
-                self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date, end_episode=file_meta.end_episode)
+        try:
+            scraping_switchs = MediaChain._get_scraping_switchs()
+            if scraping_switchs.get('tv_nfo'):
+                if not os.path.exists(f"{tv_path}/tvshow.nfo"):
+                    tags = mediainfo.tagline.split() if mediainfo.tagline else []
+                    self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, tags, mediainfo.actors)
+            if scraping_switchs.get('season_nfo'):
+                if not os.path.exists(f"{se_path}/season.nfo"):
+                    self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
+            if scraping_switchs.get('episode_nfo') and os.path.isfile(ep_path):
+                if not os.path.exists(f"{se_path}/{name}.nfo"):
+                    self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date, end_episode=file_meta.end_episode)
+        except Exception as e:
+            logger.error(f"刮削nfo文件失败：{e}")
+            raise e
 
         download_path = f"{tv_path}/download.jpg"
         file_path = Path(download_path)
@@ -671,7 +684,7 @@ class PlayletPolishScrape(_PluginBase):
         else:
             thumb_path = file_path.with_name(file_path.stem + "-site.jpg")
         if thumb_path.exists():
-            logger.info(f"图片已存在/下载：{thumb_path}")
+            logger.debug(f"图片已存在/下载：{thumb_path}")
             self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
         else:
             if self.__save_image(url=mediainfo.poster_path, file_path=thumb_path):
@@ -918,16 +931,19 @@ class PlayletPolishScrape(_PluginBase):
         """
         使用ffmpeg从视频文件中截取缩略图
         """
-        if not frames:
-            frames = self._timeline
-        if not video_path or not image_path:
-            return False
-        cmd = 'ffmpeg -y -i "{video_path}" -ss {frames} -frames 1 "{image_path}"'.format(
-            video_path=video_path,
-            frames=frames,
-            image_path=image_path)
-        result = SystemUtils.execute(cmd)
-        if result:
+        def _get_thumb_task(video_path, image_path, frames):
+            if not frames:
+                frames = self._timeline
+            if not video_path or not image_path:
+                return False
+            cmd = f'ffmpeg -y -i "{video_path}" -ss "{frames}" -frames 1 "{image_path}"'
+            result = SystemUtils.execute(cmd)
+            if result:
+                logger.warn(f"截取视频缩略图：{video_path}，信息：{result}")
+
+        # 提交任务到线程池
+        future = self._thread_pool.submit(_get_thumb_task, video_path, image_path, frames)
+        if future:
             return True
         return False
 
@@ -937,6 +953,7 @@ class PlayletPolishScrape(_PluginBase):
         max_size = 0
         # 支持的图片文件格式
         image_extensions = (".jpg", ".jpeg", ".png")
+        tag_img = ["folder.jpg", "poster.jpg"]
 
         if not os.path.isdir(dir_path):
             dir_path = Path(dir_path).parent
@@ -944,6 +961,8 @@ class PlayletPolishScrape(_PluginBase):
         for filename in os.listdir(dir_path):
             file_path = os.path.join(dir_path, filename)
             if os.path.isfile(file_path) and filename.lower().endswith(image_extensions):
+                if filename.lower() in tag_img:
+                    return file_path
                 file_size = os.path.getsize(file_path)
                 if file_size > max_size:
                     max_size = file_size
@@ -1338,6 +1357,14 @@ class PlayletPolishScrape(_PluginBase):
         """
         退出插件
         """
+        try:
+            if self._thread_pool:
+                self._thread_pool.shutdown(wait=True)
+                self._thread_pool = None
+        except Exception as e:
+            self._thread_pool = None
+            logger.error(f"线程池关闭失败：{e}")
+
         try:
             if self._scheduler:
                 self._scheduler.remove_all_jobs()

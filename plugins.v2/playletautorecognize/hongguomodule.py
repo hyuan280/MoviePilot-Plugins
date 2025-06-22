@@ -228,7 +228,7 @@ class HongGuoModule(_ModuleBase):
         """
         mediainfos = []
         # 网页版不支持特殊字符搜索，删除特殊字符
-        search_name = re.sub('[ ，,：:]', '', meta.cn_name)
+        search_name = re.sub(r'[ ，,：:&$]', '', meta.cn_name)
 
         if cache:
             # 读取缓存
