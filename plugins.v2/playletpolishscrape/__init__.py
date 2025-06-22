@@ -62,7 +62,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.0.1"
+    plugin_version = "2.0.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -357,7 +357,6 @@ class PlayletPolishScrape(_PluginBase):
 
         file_meta.org_string = title
         file_meta.subtitle = subtitle
-        file_meta.customization = '短剧'
         file_meta.cn_name = title
         file_meta.en_name = self.__to_pinyin_with_title(title)
 
@@ -401,6 +400,9 @@ class PlayletPolishScrape(_PluginBase):
                 tv_path = Path(media_path).parent.parent
                 tv_name = tv_path.name
             file_meta = self.__meta_search_tv_name(file_meta, tv_name)
+
+        file_meta.customization = '短剧'
+
         if self._rename_title:
             rename_titles = self._rename_title.split("\n")
             if not rename_titles:
@@ -659,6 +661,10 @@ class PlayletPolishScrape(_PluginBase):
 
         download_path = f"{tv_path}/download.jpg"
         file_path = Path(download_path)
+
+        if not mediainfo.poster_path:
+            logger.warn(f"{mediainfo.title} 未获取到图片")
+            return
 
         if img_path:
             thumb_path = Path(img_path)

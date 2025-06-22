@@ -169,10 +169,10 @@ class PlayletAutoRecognize(_PluginBase):
 
         if self._onlyplaylet:
             if not meta.customization:
-                logger.info("没有识别词，跳过")
+                logger.info(f"{meta.name} 没有识别词，跳过")
                 return None
             if not self._playlet_keywords:
-                logger.info("没有短剧关键词，跳过")
+                logger.info(f"{meta.name} 没有短剧关键词，跳过")
                 return None
             is_continue = False
             keywords = self._playlet_keywords.split("\n")
@@ -182,11 +182,11 @@ class PlayletAutoRecognize(_PluginBase):
                     is_continue = True
                     break
             if not is_continue:
-                logger.info("识别词不是短剧关键词，跳过")
+                logger.info(f"{meta.name} 识别词不是短剧关键词，跳过")
                 return None
 
         if not meta.cn_name:
-            logger.warn(f"红果短剧只支持中文标题搜索")
+            logger.warn(f"{meta.name} 红果短剧只支持中文标题搜索")
             return None
 
         result_sum = None
