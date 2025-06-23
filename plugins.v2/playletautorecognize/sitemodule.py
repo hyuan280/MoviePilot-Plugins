@@ -3,25 +3,31 @@ import requests
 import datetime
 
 from typing import Optional, Tuple, Union
-
+from pathlib import Path
 from lxml import etree
+from bencode import bdecode, bencode
 
 from app.chain.search import SearchChain
 from app.core.meta import MetaBase
-from app.core.context import MediaInfo
+from app.core.context import MediaInfo, Context, TorrentInfo, MetaInfo
 from app.modules import _ModuleBase
 from app.log import logger
 from app.schemas.types import MediaType, ModuleType, MediaRecognizeType
 from app.db.site_oper import SiteOper
+from app.utils.system import SystemUtils
+from app.utils.string import StringUtils
 
 from .myutils import get_page_source
 from .myutils import PlayletCache, PlayletScraper
 
 class SiteApi():
     _searchsites = []
+    _torrent_dirs = []
+    _last_page_cache = []
 
-    def __init__(self, searchsites):
+    def __init__(self, searchsites, torrent_dirs):
         self._searchsites = searchsites
+        self._torrent_dirs = torrent_dirs
         self._session = requests.Session()
 
     def close(self):
@@ -215,8 +221,11 @@ class SiteApi():
         :param torrent: 种子信息
         :return: 页面text
         '''
-        site = SiteOper().get(torrent.get('site'))
         url = torrent.get("page_url")
+        if self._last_page_cache and self._last_page_cache[0] == url:
+            return self._last_page_cache[1]
+
+        site = SiteOper().get(torrent.get('site'))
         # 获取种子详情页
         torrent_detail_source = get_page_source(url=url, session=self._session, cookies=site.cookie, timeout=30)
         if not torrent_detail_source:
@@ -228,7 +237,103 @@ class SiteApi():
             logger.error(f"详情页无数据 {url}")
             return None
 
+        self._last_page_cache = [url, html]
+
         return html
+
+    def __get_context_form_torrent(self, meta):
+        if not self._torrent_dirs:
+            return None
+
+        grep_cmd = ['grep']
+        if meta.cn_name and meta.en_name:
+            grep_cmd.extend(['-rE', f'{meta.cn_name}|{meta.en_name}'])
+        elif meta.cn_name:
+            grep_cmd.extend(['-r', f'{meta.cn_name}'])
+        elif meta.en_name:
+            grep_cmd.extend(['-r', f'{meta.en_name}'])
+        else:
+            return None
+
+        torrent_result = []
+        # 使用grep查找包含标题的种子文件
+        for torrent_dir in self._torrent_dirs:
+            grep_cmd.append(torrent_dir)
+            err, data = SystemUtils.execute_with_subprocess(grep_cmd)
+            if not err:
+                logger.error(f"查找目录下 {torrent_dir} 种子文件错误：{data}")
+                continue
+            for msg in data.split('\n'):
+                match = re.match(r'grep: (.*): binary file matches$', msg)
+                if match:
+                    torrent_result.append(match.group(1))
+
+        if not torrent_result:
+            return None
+
+        torrent_1dicts = []
+        for torrent in torrent_result:
+            torrent_path = Path(torrent)
+            torrent_data = torrent_path.read_bytes()
+            torrent_detail = bdecode(torrent_data)
+            comment = torrent_detail.get('comment')
+            url_index = comment.find('http')
+            if url_index >= 0:
+                url = comment[url_index:]
+            else:
+                continue
+            domain = StringUtils.get_url_domain(url)
+            # 检查url是否在mp站点中
+            site = SiteOper().get_by_domain(domain)
+            if not site:
+                logger.info(f"没有站点：{domain}")
+                continue
+            # 检查站点有没有被选择来识别短剧
+            if not site.id in self._searchsites:
+                logger.info(f"可以添加站点到识别列表中：{site.name}")
+                continue
+
+            torrent_1dicts.append([site, url])
+
+        # 按选择的站点顺序排序
+        torrent_2dicts = []
+        for id in self._searchsites:
+            for _info in torrent_1dicts:
+                if id == _info[0].id:
+                    torrent_2dicts.append(_info)
+
+        # 按顺序，找到数据就返回
+        for _info in torrent_2dicts:
+            site = _info[0]
+            url = _info[1]
+            torrent_info = TorrentInfo(site=site.id,
+                                    site_name=site.name,
+                                    site_cookie=site.cookie,
+                                    site_ua=site.ua,
+                                    site_proxy=site.proxy,
+                                    site_order=site.pri,
+                                    site_downloader=site.downloader,
+                                    page_url=url)
+            html = self.__site_brief_text(torrent_info.to_dict())
+            if not html:
+                continue
+            title_text = html.xpath("//h1[@id='top']/text()")
+            title = ' '.join(title_text).strip()
+            subtitle = ""
+            tr_elements = html.xpath('//tr')
+            for tr in tr_elements:
+                key_column_value = tr.xpath('.//td[1]/text()')
+                if key_column_value and key_column_value[0].strip() == '副标题':
+                    value_column_value = tr.xpath('.//td[2]/text()')
+                    if value_column_value:
+                        subtitle = value_column_value[0].strip()
+
+            context = Context(meta_info=MetaInfo(title=title, subtitle=subtitle),
+                            torrent_info=torrent_info)
+            logger.debug(f"context={context}")
+            return context.to_dict()
+
+        return None
 
     def search(self, meta: MetaBase):
         '''
@@ -236,7 +341,12 @@ class SiteApi():
         :param meta: 文件元数据
         :return: 媒体元数据
         '''
+        # 搜索站点
         context = self.__site_get_context(meta)
+        if not context:
+            # 搜索种子文件
+            context = self.__get_context_form_torrent(meta)
+
         if not context:
             return None
 
@@ -245,7 +355,7 @@ class SiteApi():
         if not brief_texts:
             return None
 
-        logger.debug(f"brief_texts={brief_texts}")
+        logger.debug(f"从种子详情页提取数据 ...")
 
         img_url = None
         images = brief_texts[0].xpath(".//img[1]/@src")
@@ -326,12 +436,15 @@ class SiteModule(_ModuleBase):
     scraper: PlayletScraper = None
 
     _searchsites = []
+    _torrent_dirs = []
 
-    def __init__(self, searchsites) -> None:
+    def __init__(self, searchsites, torrent_dirs: list = []) -> None:
+        super().__init__()
         self._searchsites = searchsites
+        self._torrent_dirs = torrent_dirs
 
     def init_module(self) -> None:
-        self.site = SiteApi(self._searchsites)
+        self.site = SiteApi(self._searchsites, self._torrent_dirs)
         self.scraper = PlayletScraper()
         self.cache = PlayletCache('site')
 

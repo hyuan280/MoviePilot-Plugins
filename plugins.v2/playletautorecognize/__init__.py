@@ -25,7 +25,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.3.4"
+    plugin_version = "1.3.5"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -45,6 +45,7 @@ class PlayletAutoRecognize(_PluginBase):
     _playlet_keywords = ""
     _searchwebs = []
     _searchsites = []
+    _torrent_dirs = ""
 
     _site_infos = []
     _recognize_srcs = {}
@@ -65,6 +66,7 @@ class PlayletAutoRecognize(_PluginBase):
             self._playlet_keywords = config.get("playlet_keywords")
             self._searchwebs = config.get("searchwebs", [])
             self._searchsites = config.get("searchsites", [])
+            self._torrent_dirs = config.get("torrent_dirs")
 
         logger.info(f"插件使能：{self._enabled}")
 
@@ -97,7 +99,7 @@ class PlayletAutoRecognize(_PluginBase):
 
         if self._searchsites:
             if not self._recognize_srcs.get(SiteModule.get_name()):
-                _module = SiteModule(self._searchsites)
+                _module = SiteModule(self._searchsites, self._torrent_dirs.split('\n') if self._torrent_dirs else [])
                 _module.init_module()
                 self._recognize_srcs[SiteModule.get_name()] = _module
 
@@ -219,6 +221,7 @@ class PlayletAutoRecognize(_PluginBase):
             "searchwebs": self._searchwebs,
             "searchsites": self._searchsites,
             "clearcache": self._clearcache,
+            "torrent_dirs": self._torrent_dirs,
         })
 
     def scheduler_job(self):
@@ -370,6 +373,28 @@ class PlayletAutoRecognize(_PluginBase):
                                 },
                                 'content': [
                                     {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'torrent_dirs',
+                                            'label': '种子文件目录',
+                                            'rows': 2,
+                                            'placeholder': '每一行一个目录'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                },
+                                'content': [
+                                    {
                                         'component': 'VAlert',
                                         'props': {
                                             'type': 'info',
@@ -411,6 +436,7 @@ class PlayletAutoRecognize(_PluginBase):
             "playlet_keywords": "",
             "searchwebs": [],
             "searchsites": [],
+            "torrent_dirs": "",
         }
 
     def get_state(self) -> bool:

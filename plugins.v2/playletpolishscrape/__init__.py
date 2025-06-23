@@ -63,7 +63,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.0.4"
+    plugin_version = "2.0.5"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -302,7 +302,11 @@ class PlayletPolishScrape(_PluginBase):
                            event_path=event_path,
                            source_dir=source_dir)
 
-    def __to_pinyin_with_title(self, s):
+    @staticmethod
+    def _to_pinyin_with_title(s):
+        '''
+        中文标题转拼音英文标题
+        '''
         if not s:
             return ""
 
@@ -311,7 +315,14 @@ class PlayletPolishScrape(_PluginBase):
         for z in s:
             pinyin_list.append(p.get_pinyin(z, '').title())
 
-        return ' '.join(pinyin_list).replace('，', ',')
+        title = ""
+        for world in pinyin_list:
+            if world.isdigit():
+                title += world
+            else:
+                title += f" {world} "
+
+        return title.replace('，', ',').replace('  ', ' ').strip()
 
     def __meta_search_tv_name(self, file_meta: MetaInfoPath, tv_name: str, is_compilations: bool = False):
         tv_name = tv_name.strip('.')
@@ -393,7 +404,7 @@ class PlayletPolishScrape(_PluginBase):
         file_meta.org_string = title
         file_meta.subtitle = subtitle
         file_meta.cn_name = title
-        file_meta.en_name = self.__to_pinyin_with_title(title)
+        file_meta.en_name = self._to_pinyin_with_title(title)
 
         if is_compilations:
             file_meta.begin_season = 0
@@ -424,7 +435,7 @@ class PlayletPolishScrape(_PluginBase):
                             logger.info(f"替换标题：{file_meta.cn_name} => {new_title}")
 
                             file_meta.cn_name = new_title
-                            file_meta.en_name = self.__to_pinyin_with_title(new_title)
+                            file_meta.en_name = self._to_pinyin_with_title(new_title)
                             break
                     else:
                         if file_meta.en_name and re.search(rf"{old_title}", file_meta.en_name):

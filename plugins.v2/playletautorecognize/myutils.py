@@ -273,10 +273,7 @@ def get_page_source(url: str, session = None, cookies = None, proxies = None, ti
     #logger.debug(f"请求网页：{page_source}")
     return page_source
 
-def _to_pinyin_with_title(s: str) -> str:
-    '''
-    中文标题转拼音英文标题
-    '''
+def _to_pinyin_with_title(s):
     if not s:
         return ""
 
@@ -285,7 +282,14 @@ def _to_pinyin_with_title(s: str) -> str:
     for z in s:
         pinyin_list.append(p.get_pinyin(z, '').title())
 
-    return ' '.join(pinyin_list).replace('，', ',')
+    title = ""
+    for world in pinyin_list:
+        if world.isdigit():
+            title += world
+        else:
+            title += f" {world} "
+
+    return title.replace('，', ',').replace('  ', ' ').strip()
 
 def meta_search_tv_name(file_meta: MetaBase, tv_name: str) -> MetaBase:
     '''
