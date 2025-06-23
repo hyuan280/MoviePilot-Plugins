@@ -80,7 +80,7 @@ class HongGuoApi():
                 em_text = li_element.xpath('./em')[0].text
                 li_text = li_element.xpath('string(.)')
 
-                result_dict[em_text.replace('：', '').strip()] = li_text.replace(em_text, '').replace('/', ' ').strip().split()
+                result_dict[em_text.replace('：', '').strip()] = li_text.replace(em_text, '').replace('/', ' ').strip().split()[0]
 
         logger.info(f"result_dict={result_dict}")
 

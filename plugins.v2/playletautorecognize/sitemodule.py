@@ -54,36 +54,59 @@ class SiteApi():
             info['season_episode'] = "S01"
         return info
 
-    def __site_comparison_meta(self, name, tv_name):
-        '''
-        粗略的识别是不是搜索到了种子
-        :param name: 媒体的中文标题
-        :param tv_name: 搜索到的种子标题
-        :return: 是否是这个种子
-        '''
-        tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
-        tv_name = re.sub(r'＆', '&', tv_name)
-        match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
-        if match:
-            title = match.group(1).strip().split('(')[0]
-        else:
-            title = tv_name.split('(')[0]
-
-        if name and name == title:
-            return True
-        elif len(name) > 6 and name in title:
-                return True
-
-        return False
-
     def __site_get_context(self, meta: MetaBase) -> dict:
         '''
         从站点搜索种子
         :param meta: 文件元数据
         :return: 最符合的种子信息
         '''
-        site_contexts = []
+        def _site_comparison_meta_name(oldmeta, newmeta):
+            '''
+            粗略的识别是不是搜索到了种子
+            :param name: 媒体的中文标题
+            :param tv_name: 搜索到的种子标题
+            :return: 是否是这个种子
+            '''
 
+            meta_org_name = newmeta.get('org_string')
+            if not meta_org_name:
+                return False
+            meta_org_name = meta_org_name.replace('$', ' ').replace('&', ' ').strip() if meta_org_name else None
+
+            if oldmeta.cn_name:
+                tv_name = re.sub(r'（', '(', re.sub(r'）', ')', meta_org_name))
+                tv_name = re.sub(r'＆', '&', tv_name)
+                match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
+                if match:
+                    title = match.group(1).strip().split('(')[0]
+                else:
+                    title = tv_name.split('(')[0]
+
+                if oldmeta.cn_name == title:
+                    return True
+                elif len(oldmeta.cn_name) > 6 and oldmeta.cn_name in title:
+                        return True
+
+            if oldmeta.en_name:
+                # 如果是英文名称，直接比较
+                if oldmeta.en_name in meta_org_name:
+                    return True
+                else:
+                    # 逐个比较英文名称的单词, 允许两个多音单词
+                    fail_cnt = 0
+                    newwords = meta_org_name.split()
+                    for index, word in enumerate(oldmeta.en_name.split()):
+                        start_split = index-1 if index-1 >= 0 else 0
+                        end_split = index+1 if index+1 < len(newwords) else -1
+                        if not word in newwords[start_split:end_split]:
+                            fail_cnt += 1
+                            if fail_cnt >= 2:
+                                return False
+                    return True
+
+            return False
+
+        site_contexts = []
         torrents = SearchChain().last_search_results()
         if torrents:
             for torrent in torrents:
@@ -96,12 +119,9 @@ class SiteApi():
                 if (meta.en_name and meta.en_name == meta_en_name) or (meta.cn_name and meta.cn_name == meta_cn_name):
                     _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'))
                     site_contexts.append(_context)
-                else:
-                    meta_org_name = _context.get('meta_info').get('org_string')
-                    meta_org_name = meta_org_name.replace('$', ' ').replace('&', ' ').strip() if meta_org_name else None
-                    if self.__site_comparison_meta(meta.cn_name, meta_org_name):
-                        _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
-                        site_contexts.append(_context)
+                elif _site_comparison_meta_name(meta, _context.get('meta_info')):
+                    _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
+                    site_contexts.append(_context)
         if len(site_contexts) == 0:
             torrents = SearchChain().search_by_title(title=meta.cn_name, sites=self._searchsites, cache_local=True)
             if torrents:
@@ -115,13 +135,9 @@ class SiteApi():
                     if (meta.en_name and meta.en_name == meta_en_name) or (meta.cn_name and meta.cn_name == meta_cn_name):
                         _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'))
                         site_contexts.append(_context)
-                    else:
-                        meta_org_name = _context.get('meta_info').get('org_string')
-                        meta_org_name = meta_org_name.replace('$', ' ').replace('&', ' ').strip() if meta_org_name else None
-                        if self.__site_comparison_meta(meta.cn_name, meta_org_name):
-                            _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
-
-                            site_contexts.append(_context)
+                    elif _site_comparison_meta_name(meta, _context.get('meta_info')):
+                        _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
+                        site_contexts.append(_context)
             else:
                 return {}
 
@@ -242,7 +258,7 @@ class SiteApi():
         brief_text = brief_texts[0].xpath("string()").strip()
         brief = None
         if brief_text and len(brief_text) > 5:
-            brief_match = re.search(r'简\s*介\s*[：:]([^◎]*)', brief_text)
+            brief_match = re.search(r'简\s*介\s*[：: ]?([^◎]*)', brief_text)
             if brief_match:
                 brief = brief_match.group(1).strip()
             else:

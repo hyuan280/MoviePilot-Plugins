@@ -63,7 +63,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.0.3"
+    plugin_version = "2.0.4"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -318,10 +318,15 @@ class PlayletPolishScrape(_PluginBase):
         tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
         tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
         tv_name = re.sub(r'＆', '&', tv_name)
+        tv_name = re.sub(r"【.*】", '', tv_name)
         logger.info(f"尝试识别媒体信息：{tv_name}")
         match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
         if match:
-            title = match.group(1).strip().split('(')[0]
+            title = match.group(1)
+            if title[0] == '(':
+                title = title.strip().split(')')[1]
+            else:
+                title = title.strip().split('(')[0]
             try:
                 episodes = int(match.group(2))
             except:
@@ -345,7 +350,7 @@ class PlayletPolishScrape(_PluginBase):
             actor_list = []
 
         if '-' in file_meta.org_string:
-            ep_match = re.search(r'^(\d+)-(\d+)', file_meta.org_string)
+            ep_match = re.search(r'^(\d+)[.-](\d+)\b', file_meta.org_string)
             if ep_match:
                 try:
                     file_meta.begin_episode = int(ep_match.group(1))
@@ -354,6 +359,28 @@ class PlayletPolishScrape(_PluginBase):
                         file_meta.end_episode = None
                 except:
                     logger.error(f"文件名获取的集数错误({ep_match.group(1)}-{ep_match.group(2)})")
+
+            else:
+                ep_match = re.search(r'^(\d+)[.-]([0-9a-zA-Z]+)\b', file_meta.org_string)
+                if ep_match:
+                    try:
+                        file_meta.begin_episode = int(ep_match.group(1))
+                    except:
+                        logger.error(f"文件名获取的集数错误({ep_match.group(1)})")
+
+        if not file_meta.begin_season:
+            ep_match = re.search(r'^(\d+)\b', file_meta.org_string) # 集数可能在开头
+            if not ep_match:
+                ep_match = re.search(r'(\d+)$', file_meta.org_string) # 集数可能在结尾
+            if ep_match:
+                try:
+                    file_meta.begin_episode = int(ep_match.group(1))
+                except:
+                    logger.error(f"文件名获取的集数错误({ep_match.group(1)})")
+                if episodes > 0 and file_meta.begin_episode:
+                    if file_meta.begin_episode > episodes:
+                        logger.error(f"文件名获取的集数错误: 集数({file_meta.begin_episode}) > 总集({episodes})")
+                        file_meta.begin_episode = None
 
         if actor_list:
             actors = ' '.join(actor_list)
@@ -380,9 +407,39 @@ class PlayletPolishScrape(_PluginBase):
         return file_meta
 
     def __meta_complement(self, is_directory: bool, media_path: str):
+
+        def _meta_rename_title(file_meta):
+            if self._rename_title:
+                rename_titles = self._rename_title.split("\n")
+                if not rename_titles:
+                    return file_meta
+
+                for rename_title in rename_titles:
+                    if not '=>' in rename_title:
+                        continue
+                    old_title = rename_title.split('=>')[0].strip()
+                    new_title = rename_title.split('=>')[1].strip().replace('$', ' ').replace('&', ' ').strip()
+                    if StringUtils.is_chinese(new_title):
+                        if file_meta.cn_name and re.search(rf"{old_title}", file_meta.cn_name):
+                            logger.info(f"替换标题：{file_meta.cn_name} => {new_title}")
+
+                            file_meta.cn_name = new_title
+                            file_meta.en_name = self.__to_pinyin_with_title(new_title)
+                            break
+                    else:
+                        if file_meta.en_name and re.search(rf"{old_title}", file_meta.en_name):
+                            logger.info(f"替换标题：{file_meta.en_name} => {new_title}")
+                            file_meta.cn_name = None
+                            file_meta.en_name = old_title
+                            break
+
+            return file_meta
+
         _path = Path(media_path)
         tv_path = _path
         file_meta = MetaInfoPath(_path)
+        if file_meta.cn_name and file_meta.year:
+            return _meta_rename_title(file_meta), str(tv_path)
         if _path.parent.name in ['合集', '长篇', '长篇合集', '合集长篇']:
             logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
             parent_dir = _path.parent
@@ -393,14 +450,15 @@ class PlayletPolishScrape(_PluginBase):
                     break
             if not is_tv:
                 logger.info(f"父目录不是电视剧目录，不处理：{media_path}")
-                return None
+                return None, tv_path
             tv_path = parent_dir.parent
             tv_name = tv_path.name
             file_meta = self.__meta_search_tv_name(file_meta, tv_name, True)
-        elif re.search(r'^\d+(-\d+)?([集话]|本季完|完结|最终集|大结局)?$', file_meta.org_string) or re.search(r'^\d+-\d+-.*', file_meta.org_string):
+        elif re.search(r'^\d+([.-][0-9a-zA-Z]+)?([.-]\d+)?([集话]|本季完|完结|最终集|大结局)?.?$', file_meta.org_string) or re.search(r'^\d+[.-]([0-9a-zA-Z]+)-.*', file_meta.org_string):
+            logger.info(f"文件名符合剧集目录：{file_meta.org_string}")
             if is_directory:
                 logger.warn(f"单独的数字目录，不处理：{media_path}")
-                return None
+                return None, tv_path
 
             tv_path = Path(media_path).parent
             tv_name = tv_path.name
@@ -411,31 +469,7 @@ class PlayletPolishScrape(_PluginBase):
 
         file_meta.customization = '短剧'
 
-        if self._rename_title:
-            rename_titles = self._rename_title.split("\n")
-            if not rename_titles:
-                return file_meta
-
-            for rename_title in rename_titles:
-                if not '=>' in rename_title:
-                    continue
-                old_title = rename_title.split('=>')[0].strip()
-                new_title = rename_title.split('=>')[1].strip()
-                if StringUtils.is_chinese(new_title):
-                    if file_meta.cn_name and old_title in file_meta.cn_name:
-                        logger.info(f"替换标题：{file_meta.cn_name} => {new_title}")
-
-                        file_meta.cn_name = new_title
-                        file_meta.en_name = self.__to_pinyin_with_title(new_title)
-                    break
-                else:
-                    if file_meta.en_name and old_title in file_meta.en_name:
-                        logger.info(f"替换标题：{file_meta.en_name} => {new_title}")
-                        file_meta.cn_name = None
-                        file_meta.en_name = old_title
-                    break
-
-        return file_meta, str(tv_path)
+        return _meta_rename_title(file_meta), str(tv_path)
 
     def __handle_file(self, is_directory: bool, event_path: str, source_dir: str):
         """
@@ -469,12 +503,18 @@ class PlayletPolishScrape(_PluginBase):
             logger.error(f"{Path(event_path).name} 无法识别有效信息")
             return
 
+        # 检查是否有集数
+        if not file_meta.begin_episode:
+            # 如果有title和year，说明是连续剧，先将集数设置为1
+            if file_meta.name and file_meta.year:
+                file_meta.begin_episode = 1
+
         try:
             # 从选择的站点识别媒体信息
             _begin_season = file_meta.begin_season # 识别会将begin_season修改，先保存
             mediainfo = self.chain.recognize_media(meta=file_meta, mtype=MediaType.TV, cache=True)
             if not mediainfo:
-                logger.error(f"选择的站点未查找到媒体信息")
+                logger.error(f"未查找到媒体信息")
                 return
             file_meta.begin_season = _begin_season # 恢复
             if not mediainfo.season:
@@ -687,8 +727,11 @@ class PlayletPolishScrape(_PluginBase):
             logger.debug(f"图片已存在/下载：{thumb_path}")
             self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
         else:
-            if self.__save_image(url=mediainfo.poster_path, file_path=thumb_path):
-                self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
+            try:
+                if self.__save_image(url=mediainfo.poster_path, file_path=thumb_path):
+                    self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
+            except RequestException as e:
+                logger.error(f"下载图片失败：{e}")
 
     def send_msg(self):
         """
@@ -921,6 +964,7 @@ class PlayletPolishScrape(_PluginBase):
                 self._img_error_cache[url] = self._img_error_cache.get(url) + 1
                 return False
         except RequestException as err:
+            self._img_error_cache[url] = self._img_error_cache.get(url) + 1
             raise err
         except Exception as err:
             logger.error(f"{file_path.stem}图片下载失败：{str(err)}")
