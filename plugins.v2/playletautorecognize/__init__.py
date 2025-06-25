@@ -1,10 +1,9 @@
-
+import importlib
 from typing import Optional, Any, List, Dict, Tuple
 
 from app.helper.sites import SitesHelper
 from app.core.meta import MetaBase
 from app.core.context import MediaInfo
-from app.modules.filemanager import FileManagerModule
 from app.modules.themoviedb import TheMovieDbModule
 from app.db.site_oper import SiteOper
 from app.log import logger
@@ -13,7 +12,6 @@ from app.schemas.types import MediaType
 
 from .hongguomodule import HongGuoModule
 from .sitemodule import SiteModule
-from .myutils import meta_search_tv_name
 from .myutils import merge_mediainfo
 
 
@@ -25,7 +23,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.3.5"
+    plugin_version = "1.4.0"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -41,7 +39,6 @@ class PlayletAutoRecognize(_PluginBase):
     _enabled = False
     _clearcache = False
     _onlyplaylet = True
-    _filemanager = None
     _playlet_keywords = ""
     _searchwebs = []
     _searchsites = []
@@ -109,8 +106,6 @@ class PlayletAutoRecognize(_PluginBase):
                     src.clear_cache()
             self._clearcache = False
 
-        self._filemanager = FileManagerModule()
-
         # 更新配置
         self.__update_config()
 
@@ -132,6 +127,17 @@ class PlayletAutoRecognize(_PluginBase):
         if mediainfo.category == '短剧':
             return mediainfo
         return None
+
+    @staticmethod
+    def __import_meta_search_tv_name():
+        def meta_search_tv_name(file_meta: MetaBase, tv_name: str, is_compilations: bool = False):
+            return file_meta
+        try:
+            module = importlib.import_module("app.plugins.playletpolishscrape")
+            import_func = getattr(module, "meta_search_tv_name")
+        except (ModuleNotFoundError, AttributeError):
+            import_func = meta_search_tv_name
+        return import_func
 
     def recognize_media(self, meta: MetaBase = None,
                         mtype: Optional[MediaType] = None,
@@ -164,9 +170,6 @@ class PlayletAutoRecognize(_PluginBase):
             logger.error("短剧只识别电视剧")
             return None
 
-        if meta.cn_name:
-            meta = meta_search_tv_name(meta, meta.cn_name)
-
         logger.debug(f"{meta}")
 
         if self._onlyplaylet:
@@ -186,6 +189,11 @@ class PlayletAutoRecognize(_PluginBase):
             if not is_continue:
                 logger.debug(f"{meta.name} 识别词不是短剧关键词，跳过")
                 return None
+        else:
+            if not self._onlyplaylet:
+                func = self.__import_meta_search_tv_name()
+                if func:
+                    meta = func(meta, meta.cn_name)
 
         if not meta.cn_name:
             logger.warn(f"{meta.name} 红果短剧只支持中文标题搜索")

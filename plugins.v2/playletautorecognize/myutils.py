@@ -9,8 +9,6 @@ from threading import RLock
 from pathlib import Path
 from typing import Optional
 
-from xpinyin import Pinyin
-
 from app.core.meta import MetaBase
 from app.core.config import settings
 from app.core.context import MediaInfo
@@ -272,80 +270,6 @@ def get_page_source(url: str, session = None, cookies = None, proxies = None, ti
 
     #logger.debug(f"请求网页：{page_source}")
     return page_source
-
-def _to_pinyin_with_title(s):
-    if not s:
-        return ""
-
-    p = Pinyin()
-    pinyin_list = []
-    for z in s:
-        pinyin_list.append(p.get_pinyin(z, '').title())
-
-    title = ""
-    for world in pinyin_list:
-        if world.isdigit():
-            title += world
-        else:
-            title += f" {world} "
-
-    return title.replace('，', ',').replace('  ', ' ').strip()
-
-def meta_search_tv_name(file_meta: MetaBase, tv_name: str) -> MetaBase:
-    '''
-    针对短剧识别标题
-    '''
-    tv_name = tv_name.strip('.')
-    tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
-    tv_name = re.sub(r'（', '(', re.sub(r'）', ')', tv_name))
-    tv_name = re.sub(r'＆', '&', tv_name)
-    logger.info(f"尝试识别媒体信息：{tv_name}")
-    match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
-    if match:
-        title = match.group(1).strip().split('(')[0]
-        try:
-            episodes = int(match.group(2))
-        except:
-            episodes = 0
-        actors = match.group(3)
-        if actors and not '剧' in actors:
-            actors = actors.replace('/', ' ').strip()
-            if '&' in actors:
-                actor_list = actors.split('&')
-            else:
-                actor_list = [actor.strip() for actor in actors.split() if len(actor) <= 4]
-        else:
-            actor_list = []
-    else:
-        title = tv_name.split('(')[0]
-        episodes = 0
-        actor_list = []
-
-    if '-' in file_meta.org_string:
-        ep_match = re.search(r'(\d+)-(\d+)', file_meta.org_string)
-        if ep_match:
-            try:
-                file_meta.begin_episode = int(ep_match.group(1))
-                file_meta.end_episode = int(ep_match.group(2))
-            except:
-                logger.error(f"文件名获取的集数错误({ep_match.group(1)}-{ep_match.group(2)})")
-
-    if actor_list:
-        actors = ' '.join(actor_list)
-        subtitle = f"{title} | 演员：{actors}"
-    else:
-        subtitle = tv_name
-
-    file_meta.org_string = title
-    if not file_meta.subtitle:
-        file_meta.subtitle = subtitle
-    file_meta.cn_name = title
-    file_meta.en_name = _to_pinyin_with_title(title)
-    file_meta.begin_season = 1
-    file_meta.total_season = 1
-    file_meta.total_episode = episodes
-
-    return file_meta
 
 def merge_mediainfo(old_mediainfo: MediaInfo, new_mediainfo: MediaInfo) -> MediaInfo:
     '''

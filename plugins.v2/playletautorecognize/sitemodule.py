@@ -1,11 +1,12 @@
 import re
 import requests
 import datetime
+import subprocess
 
 from typing import Optional, Tuple, Union
 from pathlib import Path
 from lxml import etree
-from bencode import bdecode, bencode
+from bencode import bdecode
 
 from app.chain.search import SearchChain
 from app.core.meta import MetaBase
@@ -14,7 +15,6 @@ from app.modules import _ModuleBase
 from app.log import logger
 from app.schemas.types import MediaType, ModuleType, MediaRecognizeType
 from app.db.site_oper import SiteOper
-from app.utils.system import SystemUtils
 from app.utils.string import StringUtils
 
 from .myutils import get_page_source
@@ -77,11 +77,10 @@ class SiteApi():
             meta_org_name = newmeta.get('org_string')
             if not meta_org_name:
                 return False
-            meta_org_name = meta_org_name.replace('$', ' ').replace('&', ' ').strip() if meta_org_name else None
 
             if oldmeta.cn_name:
-                tv_name = re.sub(r'（', '(', re.sub(r'）', ')', meta_org_name))
-                tv_name = re.sub(r'＆', '&', tv_name)
+                tv_name = meta_org_name.replace('（', '(').replace('）', ')').replace('＆', '&')
+                tv_name = tv_name.replace('$', ' ').replace('&', ' ').strip()
                 match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?([^&]+))?', tv_name)
                 if match:
                     title = match.group(1).strip().split('(')[0]
@@ -103,8 +102,10 @@ class SiteApi():
                     newwords = meta_org_name.split()
                     for index, word in enumerate(oldmeta.en_name.split()):
                         start_split = index-1 if index-1 >= 0 else 0
-                        end_split = index+1 if index+1 < len(newwords) else -1
+                        end_split = index+2 if index+2 < len(newwords) else -1
                         if not word in newwords[start_split:end_split]:
+                            if word.isdigit(): #数字必须在标题中
+                                return False
                             fail_cnt += 1
                             if fail_cnt >= 2:
                                 return False
@@ -246,12 +247,8 @@ class SiteApi():
             return None
 
         grep_cmd = ['grep']
-        if meta.cn_name and meta.en_name:
-            grep_cmd.extend(['-rE', f'{meta.cn_name}|{meta.en_name}'])
-        elif meta.cn_name:
-            grep_cmd.extend(['-r', f'{meta.cn_name}'])
-        elif meta.en_name:
-            grep_cmd.extend(['-r', f'{meta.en_name}'])
+        if meta.org_string:
+            grep_cmd.extend(['-r', rf'"{meta.org_string}"'])
         else:
             return None
 
@@ -259,14 +256,15 @@ class SiteApi():
         # 使用grep查找包含标题的种子文件
         for torrent_dir in self._torrent_dirs:
             grep_cmd.append(torrent_dir)
-            err, data = SystemUtils.execute_with_subprocess(grep_cmd)
-            if not err:
-                logger.error(f"查找目录下 {torrent_dir} 种子文件错误：{data}")
+            ret = subprocess.getstatusoutput(' '.join(grep_cmd))
+            if ret[0] < 0:
+                logger.error(f"查找目录下 {torrent_dir} 种子文件错误：{ret[1]}")
                 continue
-            for msg in data.split('\n'):
-                match = re.match(r'grep: (.*): binary file matches$', msg)
-                if match:
-                    torrent_result.append(match.group(1))
+            if ret[0] == 0:
+                for msg in ret[1].split('\n'):
+                    match = re.match(r'grep: (.*): binary file matches$', msg)
+                    if match:
+                        torrent_result.append(match.group(1))
 
         if not torrent_result:
             return None
@@ -277,6 +275,8 @@ class SiteApi():
             torrent_data = torrent_path.read_bytes()
             torrent_detail = bdecode(torrent_data)
             comment = torrent_detail.get('comment')
+            if not comment:
+                continue
             url_index = comment.find('http')
             if url_index >= 0:
                 url = comment[url_index:]
@@ -351,6 +351,8 @@ class SiteApi():
             return None
 
         html = self.__site_brief_text(context.get('torrent_info'))
+        if not html:
+            return None
         brief_texts = html.xpath("//td[contains(@class, 'rowfollow')]/div[@id='kdescr']")
         if not brief_texts:
             return None
@@ -504,23 +506,27 @@ class SiteModule(_ModuleBase):
                 elif cache_data.title == meta.cn_name:
                     mediainfos = [cache_data]
 
-        if not mediainfos:
-            mediainfos = self.site.search(meta)
+        try:
+            if not mediainfos:
+                mediainfos = self.site.search(meta)
 
-        logger.debug(f"mediainfos={mediainfos}")
+            logger.debug(f"mediainfos={mediainfos}")
 
-        if not mediainfos:
+            if not mediainfos:
+                self.cache.update(meta, None)
+                return None
+
+            _mediainfo: MediaInfo = mediainfos[0]
+            if len(mediainfos) > 1:
+                for _m in mediainfos:
+                    if _m.title == meta.cn_name:
+                        _mediainfo = _m
+                        break
+
+            self.cache.update(meta, _mediainfo)
+        except Exception as e:
             self.cache.update(meta, None)
-            return None
-
-        _mediainfo: MediaInfo = mediainfos[0]
-        if len(mediainfos) > 1:
-            for _m in mediainfos:
-                if _m.title == meta.cn_name:
-                    _mediainfo = _m
-                    break
-
-        self.cache.update(meta, _mediainfo)
+            raise e
 
         return _mediainfo
 

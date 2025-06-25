@@ -107,7 +107,7 @@ class HongGuoApi():
                     mediainfo.release_date = v
             elif k == '类型':
                 if v != '未知':
-                    tags.append(v.split())
+                    tags.extend(v.split())
             elif k == '语言':
                 if v != '未知':
                     mediainfo.original_language = v
@@ -122,6 +122,7 @@ class HongGuoApi():
         mediainfo.tagline = ' '.join(tags) if tags else None
         mediainfo.mediaid_prefix = 'hongguo'
         mediainfo.category = "短剧"
+
         logger.info(f"mediainfo={mediainfo}")
         return mediainfo
 
@@ -241,23 +242,36 @@ class HongGuoModule(_ModuleBase):
                 elif cache_data.title == search_name:
                     mediainfos = [cache_data]
 
-        if not mediainfos:
-            mediainfos = self.hongguo.search(search_name)
+        try:
+            if not mediainfos:
+                mediainfos = self.hongguo.search(search_name)
 
-        logger.debug(f"mediainfos={mediainfos}")
+            logger.debug(f"mediainfos={mediainfos}")
 
-        if not mediainfos:
+            if not mediainfos:
+                self.cache.update(meta, None)
+                return None
+
+            _mediainfo: MediaInfo = mediainfos[0]
+            if len(mediainfos) > 1:
+                # 首先搜索短剧版
+                _has_playlet = False
+                for _m in mediainfos:
+                    if '短剧' in _m.title and search_name in _m.title:
+                        _m.title = search_name
+                        _mediainfo = _m
+                        _has_playlet = True
+                        break
+                if not _has_playlet:
+                    for _m in mediainfos:
+                        if _m.title == search_name:
+                            _mediainfo = _m
+                            break
+
+            self.cache.update(meta, _mediainfo)
+        except Exception as e:
             self.cache.update(meta, None)
-            return None
-
-        _mediainfo: MediaInfo = mediainfos[0]
-        if len(mediainfos) > 1:
-            for _m in mediainfos:
-                if _m.title == search_name or ('短剧' in _m.title and search_name in _m.title):
-                    _mediainfo = _m
-                    break
-
-        self.cache.update(meta, _mediainfo)
+            raise e
 
         return _mediainfo
 
