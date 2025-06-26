@@ -1,6 +1,7 @@
 import datetime
 import os
 import re
+import filecmp
 import concurrent.futures
 from pathlib import Path
 from typing import Any, List, Dict, Tuple, Optional
@@ -58,7 +59,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.1.0"
+    plugin_version = "2.2.0"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -80,6 +81,7 @@ class PlayletPolishScrape(_PluginBase):
     _historysave = True
     _onlyscrape = False
     _update = False
+    _fixlink = False
     _exclude_keywords = ""
     _polish_keywords = ""
     _transfer_type = "link"
@@ -90,6 +92,7 @@ class PlayletPolishScrape(_PluginBase):
     _dirconf = {}
     _coverconf = {}
     _interval = 10
+    _collection_size = 200
     _notify = False
     _medias = {}
     _error_count = 5
@@ -116,12 +119,14 @@ class PlayletPolishScrape(_PluginBase):
             self._enabled = config.get("enabled")
             self._onlyonce = config.get("onlyonce")
             self._link_pass = config.get("link_pass")
-            self._interval = config.get("interval")
+            self._interval = int(config.get("interval"))
+            self._collection_size = int(config.get("collection_size"))
             self._notify = config.get("notify")
             self._force = config.get("force")
             self._historysave = config.get("historysave")
             self._onlyscrape = config.get("onlyscrape")
             self._update = config.get('update')
+            self._fixlink = config.get('fixlink')
             self._monitor_confs = config.get("monitor_confs")
             self._rename_title = config.get("rename_title")
             self._exclude_keywords = config.get("exclude_keywords") or ""
@@ -340,7 +345,8 @@ class PlayletPolishScrape(_PluginBase):
         if file_meta.cn_name and file_meta.year:
             pass
         else:
-            if _path.parent.name in ['合集', '长篇', '长篇合集', '合集长篇']:
+            # 判断是不是合集，使用父目录名和文件大小判断
+            if _path.parent.name in ['合集', '长篇', '长篇合集', '合集长篇'] or (_path.is_file() and _path.stat().st_size >= self._collection_size * 1024 * 1024):
                 logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
                 parent_dir = _path.parent
                 is_tv = False
@@ -367,7 +373,13 @@ class PlayletPolishScrape(_PluginBase):
                     tv_name = tv_path.name
                 file_meta = meta_search_tv_name(file_meta, tv_name)
             elif file_meta.cn_name:
-                file_meta = meta_search_tv_name(file_meta, file_meta.cn_name)
+                tv_name = ""
+                for word in re.split(r'[ .-]', org_string):
+                    if StringUtils.is_chinese(word):
+                        tv_name += f"{word} "
+
+                tv_name = tv_name.strip()
+                file_meta = meta_search_tv_name(file_meta, tv_name)
 
         file_meta.customization = '短剧'
 
@@ -514,33 +526,53 @@ class PlayletPolishScrape(_PluginBase):
                     logger.error("文件转移模块运行错误")
                     return
 
-                if not self._historysave and not transferinfo.success:
-                    logger.warn(f"{fileitem.name} 入库失败：{transferinfo.message}")
-                    return
+                # 检查媒体库同名文件是不是一致，一致使用硬链接处理文件，不增加失败记录了
+                _link_check_ok = False
+                if self._fixlink and not transferinfo.success and transferinfo.message.startswith('媒体库存在同名文件'):
+                    src_file = transferinfo.fileitem.path
+                    dest_file = transferinfo.target_item.path
+                    temp_file = f"{src_file}.back"
+                    logger.info("媒体库同名文件，检查文件大小 ...")
+                    try:
+                        if filecmp.cmp(src_file, dest_file):
+                            os.rename(src_file, temp_file)
+                            os.link(dest_file, src_file)
+                            os.remove(temp_file)
+                            _link_check_ok = True
+                            logger.info(f"硬链接成功：{src_file} <-- {dest_file}")
+                    except Exception as e:
+                        logger.error(f"修复硬链接错误：{e}")
+                        if os.path.exists(temp_file):
+                            os.rename(temp_file, src_file)
 
-                if self._historysave:
-
-                    if not transferinfo.success:
-                        # 转移失败
+                if not _link_check_ok:
+                    if not self._historysave and not transferinfo.success:
                         logger.warn(f"{fileitem.name} 入库失败：{transferinfo.message}")
-                        # 新增转移失败历史记录
-                        self._transferhis.add_fail(
-                            fileitem=fileitem,
-                            mode=transferinfo.transfer_type if transferinfo else '',
-                            meta=file_meta,
-                            mediainfo=mediainfo,
-                            transferinfo=transferinfo
-                        )
                         return
-                    else:
-                        # 新增转移成功历史记录
-                        self._transferhis.add_success(
-                            fileitem=fileitem,
-                            mode=transferinfo.transfer_type if transferinfo else '',
-                            meta=file_meta,
-                            mediainfo=mediainfo,
-                            transferinfo=transferinfo
-                        )
+
+                    if self._historysave:
+
+                        if not transferinfo.success:
+                            # 转移失败
+                            logger.warn(f"{fileitem.name} 入库失败：{transferinfo.message}")
+                            # 新增转移失败历史记录
+                            self._transferhis.add_fail(
+                                fileitem=fileitem,
+                                mode=transferinfo.transfer_type if transferinfo else '',
+                                meta=file_meta,
+                                mediainfo=mediainfo,
+                                transferinfo=transferinfo
+                            )
+                            return
+                        else:
+                            # 新增转移成功历史记录
+                            self._transferhis.add_success(
+                                fileitem=fileitem,
+                                mode=transferinfo.transfer_type if transferinfo else '',
+                                meta=file_meta,
+                                mediainfo=mediainfo,
+                                transferinfo=transferinfo
+                            )
 
             except Exception as e:
                 logger.error(f"{event_path} 刮削失败, 请重新配置运行插件: {e}")
@@ -966,10 +998,12 @@ class PlayletPolishScrape(_PluginBase):
             "onlyonce": self._onlyonce,
             "onlyscrape": self._onlyscrape,
             "update": self._update,
+            "fixlink": self._fixlink,
             "historysave": self._historysave,
             "force": self._force,
             "link_pass": self._link_pass,
             "interval": self._interval,
+            "collection_size": self._collection_size,
             "notify": self._notify,
             "monitor_confs": self._monitor_confs,
             "rename_title": self._rename_title,
@@ -1004,7 +1038,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1020,7 +1054,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1036,7 +1070,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1048,6 +1082,23 @@ class PlayletPolishScrape(_PluginBase):
                                     }
                                 ]
                             },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'interval',
+                                            'label': '入库消息延迟',
+                                            'placeholder': '10'
+                                        }
+                                    }
+                                ]
+                            }
                         ]
                     },
                     {
@@ -1057,7 +1108,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1073,7 +1124,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1089,7 +1140,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -1097,6 +1148,23 @@ class PlayletPolishScrape(_PluginBase):
                                         'props': {
                                             'model': 'force',
                                             'label': '强制整理',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'collection_size',
+                                            'label': '认定为合集的文件大小(M)',
+                                            'placeholder': '200'
                                         }
                                     }
                                 ]
@@ -1110,7 +1178,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 5
+                                    'md': 6
                                 },
                                 'content': [
                                     {
@@ -1132,7 +1200,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 5
+                                    'md': 6
                                 },
                                 'content': [
                                     {
@@ -1141,23 +1209,6 @@ class PlayletPolishScrape(_PluginBase):
                                             'model': 'storage_type',
                                             'label': '存储类型',
                                             'items': storage_list
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 2
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'interval',
-                                            'label': '入库消息延迟',
-                                            'placeholder': '10'
                                         }
                                     }
                                 ]
@@ -1259,7 +1310,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 8
+                                    'md': 4
                                 },
                                 'content': [
                                     {
@@ -1287,6 +1338,22 @@ class PlayletPolishScrape(_PluginBase):
                                     }
                                 ]
                             },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'fixlink',
+                                            'label': '修复硬链接',
+                                        }
+                                    }
+                                ]
+                            }
                         ]
                     },
                     {
@@ -1342,7 +1409,9 @@ class PlayletPolishScrape(_PluginBase):
             "historysave": True,
             "onlyscrape": False,
             "update": False,
+            "fixlink": False,
             "interval": 10,
+            "collection_size": 200,
             "monitor_confs": "",
             "rename_title": "",
             "polish_keywords": "",
@@ -1421,14 +1490,15 @@ def meta_search_tv_name(file_meta: MetaInfoPath, tv_name: str, is_compilations: 
     tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
     tv_name = tv_name.replace('（', '(').replace('）', ')').replace('＆', '&')
     tv_name = re.sub(r"【.*】", '', tv_name)
+    tv_name = re.sub(r"\[.*\]", '', tv_name)
     logger.info(f"尝试识别媒体信息：{tv_name}")
     match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?(.+))?', tv_name)
     if match:
-        title = match.group(1)
+        title = match.group(1).strip()
         if title[0] == '(':
-            title = title.strip().split(')')[1]
+            title = title.split(')')[1]
         else:
-            title = title.strip().split('(')[0]
+            title = title.split('(')[0]
         try:
             episodes = int(match.group(2))
         except:
@@ -1486,8 +1556,8 @@ def meta_search_tv_name(file_meta: MetaInfoPath, tv_name: str, is_compilations: 
     if is_compilations:
         file_meta.begin_season = 0
         file_meta.total_season = 1
-        file_meta.total_episode = 1
-        file_meta.begin_episode = 1
+        if file_meta.begin_episode is None:
+            file_meta.begin_episode = 1
     else:
         file_meta.begin_season = 1
         file_meta.total_season = 1
