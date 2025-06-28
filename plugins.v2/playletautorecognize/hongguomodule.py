@@ -227,6 +227,7 @@ class HongGuoModule(_ModuleBase):
         :param cache:    是否使用缓存
         :return: 识别的媒体信息，包括剧集信息
         """
+
         mediainfos = []
         # 网页版不支持特殊字符搜索，删除特殊字符
         search_name = re.sub(r'[ ，,：:&$]', '', meta.cn_name)

@@ -24,6 +24,7 @@ class SiteApi():
     _searchsites = []
     _torrent_dirs = []
     _last_page_cache = []
+    _last_torrent_info = []
 
     def __init__(self, searchsites, torrent_dirs):
         self._searchsites = searchsites
@@ -129,6 +130,7 @@ class SiteApi():
                 elif _site_comparison_meta_name(meta, _context.get('meta_info')):
                     _context['meta_info'] = self.__site_meta_update(meta, _context.get('meta_info'), True)
                     site_contexts.append(_context)
+
         if len(site_contexts) == 0:
             torrents = SearchChain().search_by_title(title=meta.cn_name, sites=self._searchsites, cache_local=True)
             if torrents:
@@ -242,7 +244,12 @@ class SiteApi():
 
         return html
 
-    def __get_context_form_torrent(self, meta):
+    def __get_last_form_torrent(self, meta):
+        if self._last_torrent_info and self._last_torrent_info[0] == meta.org_string:
+            return self._last_torrent_info[1]
+        return None
+
+    def __get_info_form_torrent(self, meta):
         if not self._torrent_dirs:
             return None
 
@@ -323,15 +330,27 @@ class SiteApi():
             tr_elements = html.xpath('//tr')
             for tr in tr_elements:
                 key_column_value = tr.xpath('.//td[1]/text()')
-                if key_column_value and key_column_value[0].strip() == '副标题':
-                    value_column_value = tr.xpath('.//td[2]/text()')
-                    if value_column_value:
-                        subtitle = value_column_value[0].strip()
+                if key_column_value:
+                    key_column_value = key_column_value[0].strip()
+                    if key_column_value == '副标题':
+                        value_column_value = tr.xpath('.//td[2]/text()')
+                        if value_column_value:
+                            subtitle = value_column_value[0].strip()
+                    elif key_column_value == '下载':
+                        value_column_value = tr.xpath('.//td[2]/span/@title')
+                        if value_column_value:
+                            torrent_info.pubdate = value_column_value[0]
+                    elif key_column_value == '标签':
+                        value_column_value = tr.xpath('.//td[2]/span/text()')
+                        if value_column_value:
+                            torrent_info.labels = value_column_value
 
-            context = Context(meta_info=MetaInfo(title=title, subtitle=subtitle),
-                            torrent_info=torrent_info)
+            meta_info = MetaInfo(title=title, subtitle=subtitle)
+            context = Context(meta_info=meta_info, torrent_info=torrent_info)
+
             logger.debug(f"context={context}")
-            return context.to_dict()
+            self._last_torrent_info = [meta.org_string, context.to_dict()]
+            return self._last_torrent_info[1]
 
         return None
 
@@ -341,11 +360,14 @@ class SiteApi():
         :param meta: 文件元数据
         :return: 媒体元数据
         '''
-        # 搜索站点
-        context = self.__site_get_context(meta)
+        # 先检查种子搜索有没有
+        context = self.__get_last_form_torrent(meta)
+        if not context:
+            # 搜索站点
+            context = self.__site_get_context(meta)
         if not context:
             # 搜索种子文件
-            context = self.__get_context_form_torrent(meta)
+            context = self.__get_info_form_torrent(meta)
 
         if not context:
             return None
@@ -410,7 +432,13 @@ class SiteApi():
             datetime_object = datetime.datetime.strptime(context.get('torrent_info').get('pubdate'), '%Y-%m-%d %H:%M:%S')
             mediainfo.year = datetime_object.year
 
-        mediainfo.season = int(context.get('meta_info').get('season_episode').replace('S', ''))
+        season_episode = context.get('meta_info').get('season_episode')
+        if season_episode:
+            season_match = re.search(r'S(\d+)', season_episode)
+            if season_match:
+                mediainfo.season = int(season_match.group(1))
+            elif mediainfo.season is None:
+                mediainfo.season = 1
         mediainfo.original_title = context.get('meta_info').get('cn_name')
         mediainfo.backdrop_path = img_url
         mediainfo.poster_path = img_url

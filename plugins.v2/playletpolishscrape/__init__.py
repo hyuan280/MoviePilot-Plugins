@@ -59,7 +59,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.2.0"
+    plugin_version = "2.2.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -338,48 +338,55 @@ class PlayletPolishScrape(_PluginBase):
 
             return file_meta
 
+        def _to_chinese_tv_name(title: str) -> str:
+            tv_name = ""
+            for word in re.split(r'[ .-]', title):
+                if StringUtils.is_chinese(word):
+                    tv_name += f"{word} "
+            logger.info(f'chinese_tv_name={tv_name}')
+            return tv_name.strip()
+
         _path = Path(media_path)
         tv_path = _path
         file_meta = MetaInfoPath(_path)
         org_string = file_meta.org_string
-        if file_meta.cn_name and file_meta.year:
+
+        # 判断是不是合集，使用父目录名和文件大小判断
+        if _path.parent.name in ['合集', '合集版', '长篇', '长篇版', '长篇合集', '合集长篇'] \
+                    or (_path.is_file() and _path.stat().st_size >= self._collection_size * 1024 * 1024):
+            logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
+            parent_dir = _path.parent
+            is_tv = False
+            for file in parent_dir.iterdir():
+                if file.suffix.lower() in settings.RMT_MEDIAEXT:
+                    is_tv = True
+                    break
+            if not is_tv:
+                logger.info(f"父目录不是电视剧目录，不处理：{media_path}")
+                return None, tv_path
+            tv_path = parent_dir.parent
+            tv_name = tv_path.name
+            file_meta = meta_search_tv_name(file_meta, _to_chinese_tv_name(tv_name), True)
+        elif file_meta.cn_name and file_meta.year:
             pass
-        else:
-            # 判断是不是合集，使用父目录名和文件大小判断
-            if _path.parent.name in ['合集', '长篇', '长篇合集', '合集长篇'] or (_path.is_file() and _path.stat().st_size >= self._collection_size * 1024 * 1024):
-                logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
-                parent_dir = _path.parent
-                is_tv = False
-                for file in parent_dir.iterdir():
-                    if file.suffix.lower() in settings.RMT_MEDIAEXT:
-                        is_tv = True
-                        break
-                if not is_tv:
-                    logger.info(f"父目录不是电视剧目录，不处理：{media_path}")
-                    return None, tv_path
-                tv_path = parent_dir.parent
-                tv_name = tv_path.name
-                file_meta = meta_search_tv_name(file_meta, tv_name, True)
-            elif re.search(r'^\d+([.-][0-9a-zA-Z]+)?([.-]\d+)?([集话]|本季完|完结|最终集|大结局)?.?$', file_meta.org_string) or re.search(r'^\d+[.-]([0-9a-zA-Z]+)-.*', file_meta.org_string):
-                logger.info(f"文件名符合剧集目录：{file_meta.org_string}")
-                if is_directory:
-                    logger.warn(f"单独的数字目录，不处理：{media_path}")
-                    return None, tv_path
+        elif re.search(r'^\d+([.-][0-9a-zA-Z]+)?([.-]\d+)?([集话]|本季完|完结|最终集|大结局)?.?$', org_string) \
+                    or re.search(r'^\d+[.-]([0-9a-zA-Z]+)-.*', org_string) \
+                    or re.search(r'^[0-9a-zA-Z]*$', org_string):
+            logger.info(f"文件名符合剧集目录：{org_string}")
+            if is_directory:
+                logger.warn(f"单独的数字目录，不处理：{media_path}")
+                return None, tv_path
 
-                tv_path = Path(media_path).parent
+            tv_path = Path(media_path).parent
+            tv_name = tv_path.name
+            if tv_name == "分集":
+                tv_path = Path(media_path).parent.parent
                 tv_name = tv_path.name
-                if tv_name == "分集":
-                    tv_path = Path(media_path).parent.parent
-                    tv_name = tv_path.name
-                file_meta = meta_search_tv_name(file_meta, tv_name)
-            elif file_meta.cn_name:
-                tv_name = ""
-                for word in re.split(r'[ .-]', org_string):
-                    if StringUtils.is_chinese(word):
-                        tv_name += f"{word} "
-
-                tv_name = tv_name.strip()
-                file_meta = meta_search_tv_name(file_meta, tv_name)
+            file_meta = meta_search_tv_name(file_meta, _to_chinese_tv_name(tv_name))
+        elif file_meta.cn_name:
+            file_meta = meta_search_tv_name(file_meta, _to_chinese_tv_name(org_string))
+        elif file_meta.name and StringUtils.is_chinese(tv_path.parent.name):
+            file_meta = meta_search_tv_name(file_meta, _to_chinese_tv_name(tv_path.parent.name))
 
         file_meta.customization = '短剧'
 
@@ -468,8 +475,18 @@ class PlayletPolishScrape(_PluginBase):
             mediainfo = self.chain.recognize_media(meta=file_meta, mtype=MediaType.TV, cache=use_cache)
             if not mediainfo:
                 logger.error(f"未查找到媒体信息")
+                if self._historysave:
+                    # 新增转移失败历史记录
+                    self._transferhis.add_fail(
+                        fileitem=fileitem,
+                        mode=self._transfer_type,
+                        meta=file_meta,
+                        mediainfo=None,
+                        transferinfo=None
+                    )
                 return
             file_meta.begin_season = _begin_season # 恢复
+
             if not mediainfo.season:
                 mediainfo.season = 1
             # 短剧合集放在特殊季
@@ -477,6 +494,9 @@ class PlayletPolishScrape(_PluginBase):
                 mediainfo.season = 0
             logger.debug(f"媒体信息：{mediainfo}")
 
+            if not StringUtils.is_all_chinese(mediainfo.title):
+                file_meta = meta_search_tv_name(file_meta, mediainfo.title)
+                mediainfo.title = file_meta.cn_name
             if file_meta.cn_name in self._name_error_cache.keys():
                 if self._name_error_cache.get(file_meta.cn_name) > self._error_count:
                     logger.info(f"剧名（{file_meta.cn_name}）搜索错误次数超过{self._error_count}次")
@@ -558,7 +578,7 @@ class PlayletPolishScrape(_PluginBase):
                             # 新增转移失败历史记录
                             self._transferhis.add_fail(
                                 fileitem=fileitem,
-                                mode=transferinfo.transfer_type if transferinfo else '',
+                                mode=transferinfo.transfer_type,
                                 meta=file_meta,
                                 mediainfo=mediainfo,
                                 transferinfo=transferinfo
@@ -568,7 +588,7 @@ class PlayletPolishScrape(_PluginBase):
                             # 新增转移成功历史记录
                             self._transferhis.add_success(
                                 fileitem=fileitem,
-                                mode=transferinfo.transfer_type if transferinfo else '',
+                                mode=transferinfo.transfer_type,
                                 meta=file_meta,
                                 mediainfo=mediainfo,
                                 transferinfo=transferinfo
@@ -1489,7 +1509,11 @@ def meta_search_tv_name(file_meta: MetaInfoPath, tv_name: str, is_compilations: 
     tv_name = tv_name.strip('.')
     tv_name = re.sub(r'^\d+[-.]*', '', tv_name)
     tv_name = tv_name.replace('（', '(').replace('）', ')').replace('＆', '&')
-    tv_name = re.sub(r"【.*】", '', tv_name)
+    bracket_match = re.match(r'^【(.*)】$', tv_name)
+    if bracket_match:
+        tv_name = bracket_match.group(1)
+    else:
+        tv_name = re.sub(r"【.*】", '', tv_name)
     tv_name = re.sub(r"\[.*\]", '', tv_name)
     logger.info(f"尝试识别媒体信息：{tv_name}")
     match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?(.+))?', tv_name)
