@@ -19,7 +19,11 @@ from app.utils.http import RequestUtils
 lock = RLock()
 
 CACHE_EXPIRE_TIMESTAMP_STR = "cache_expire_timestamp"
-EXPIRE_TIMESTAMP = settings.CONF["meta"]
+CONF = settings.CONF
+if isinstance(CONF, dict):
+    EXPIRE_TIMESTAMP = CONF["meta"]
+else:
+    EXPIRE_TIMESTAMP = CONF.meta
 
 class PlayletCache():
     """
