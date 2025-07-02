@@ -59,7 +59,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.2.1"
+    plugin_version = "2.2.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -92,7 +92,7 @@ class PlayletPolishScrape(_PluginBase):
     _dirconf = {}
     _coverconf = {}
     _interval = 10
-    _collection_size = 200
+    _collection_size = 300
     _notify = False
     _medias = {}
     _error_count = 5
@@ -1184,7 +1184,7 @@ class PlayletPolishScrape(_PluginBase):
                                         'props': {
                                             'model': 'collection_size',
                                             'label': '认定为合集的文件大小(M)',
-                                            'placeholder': '200'
+                                            'placeholder': '300'
                                         }
                                     }
                                 ]
@@ -1431,7 +1431,7 @@ class PlayletPolishScrape(_PluginBase):
             "update": False,
             "fixlink": False,
             "interval": 10,
-            "collection_size": 200,
+            "collection_size": 300,
             "monitor_confs": "",
             "rename_title": "",
             "polish_keywords": "",
@@ -1545,7 +1545,7 @@ def meta_search_tv_name(file_meta: MetaInfoPath, tv_name: str, is_compilations: 
         episodes = 0
         actor_list = []
 
-    if '-' in file_meta.org_string:
+    if '-' in file_meta.org_string and file_meta.begin_episode is None:
         ep_match = re.search(r'^(\d+)[.-](\d+)\b', file_meta.org_string)
         if ep_match:
             try:
