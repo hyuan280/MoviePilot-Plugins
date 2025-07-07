@@ -1,32 +1,35 @@
 import datetime
 import os
 import re
-import filecmp
-import concurrent.futures
-from pathlib import Path
-from typing import Any, List, Dict, Tuple, Optional
-from xml.dom import minidom
-from xpinyin import Pinyin
-
 import pytz
+import filecmp
+import threading
+import concurrent.futures
+
 from PIL import Image
-from apscheduler.schedulers.background import BackgroundScheduler
+from pathlib import Path
+from typing import List, Tuple, Dict, Any, Optional
+from xml.dom import minidom
 from requests import RequestException
+from xpinyin import Pinyin
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.schedulers.background import BackgroundScheduler
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.polling import PollingObserver
-from app.helper.sites import SitesHelper
 
+from app import schemas
 from app.chain.storage import StorageChain
 from app.chain.media import MediaChain
 from app.core.config import settings
 from app.core.metainfo import MetaInfoPath
+from app.core.event import eventmanager, Event
 from app.db.transferhistory_oper import TransferHistoryOper
 from app.helper.directory import DirectoryHelper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import TransferInfo, TransferDirectoryConf
-from app.schemas.types import NotificationType, MediaType, StorageSchema
+from app.schemas.types import NotificationType, MediaType, StorageSchema, EventType
 from app.utils.common import retry
 from app.utils.dom import DomUtils
 from app.utils.http import RequestUtils
@@ -34,21 +37,24 @@ from app.utils.system import SystemUtils
 from app.utils.string import StringUtils
 
 
+lock = threading.Lock()
+
+
 class FileMonitorHandler(FileSystemEventHandler):
     """
     目录监控响应类
     """
 
-    def __init__(self, watching_path: str, file_change: Any, **kwargs):
+    def __init__(self, monpath: str, sync: Any, **kwargs):
         super(FileMonitorHandler, self).__init__(**kwargs)
-        self._watch_path = watching_path
-        self.file_change = file_change
+        self._watch_path = monpath
+        self.sync = sync
 
     def on_created(self, event):
-        self.file_change.event_handler(event=event, source_dir=self._watch_path, event_path=event.src_path)
+        self.sync.event_handler(event=event, mon_path=self._watch_path, event_path=event.src_path)
 
     def on_moved(self, event):
-        self.file_change.event_handler(event=event, source_dir=self._watch_path, event_path=event.dest_path)
+        self.sync.event_handler(event=event, mon_path=self._watch_path, event_path=event.dest_path)
 
 
 class PlayletPolishScrape(_PluginBase):
@@ -59,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "2.2.2"
+    plugin_version = "3.0.0"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -72,81 +78,92 @@ class PlayletPolishScrape(_PluginBase):
     auth_level = 1
 
     # 私有属性
-    _enabled = False
-    _monitor_confs = None
-    _rename_title = None
-    _onlyonce = False
-    _link_pass = False
-    _force = False
-    _historysave = True
-    _onlyscrape = False
-    _update = False
-    _fixlink = False
-    _exclude_keywords = ""
-    _polish_keywords = ""
-    _transfer_type = "link"
-    _storage_type = StorageSchema.Local.value
+    _scheduler = None
     _observer = []
+    _thread_pool = None
+    _medias = {}
+    _is_stoped = False
     _timeline = "00:00:10"
     _transferhis = TransferHistoryOper()
-    _dirconf = {}
-    _coverconf = {}
-    _interval = 10
-    _collection_size = 300
-    _notify = False
-    _medias = {}
+    _storagechain = StorageChain()
+
+    # 错误缓存和计数
     _error_count = 5
     _img_error_cache = {}
     _search_error_cache = {}
     _name_error_cache = {}
-    _is_stoped = False
-    _thread_pool = None
-    _storagechain = None
 
-    # 定时器
-    _scheduler: Optional[BackgroundScheduler] = None
+    # 配置属性
+    _enabled = False
+    _historysave = True
+    _notify = False
+    _link_pass = False
+    _onlyscrape = False
+    _force = False
+    _cron = None
+    _interval = 10
+    _collection_size = 300
+    _storage_type = StorageSchema.Local.value
+    _transfer_type = "link"
+    _monitor_confs = ""
+    _polish_keywords = ""
+    _exclude_keywords = ""
+    _onlyonce = False
+    _update = False
+    _fixlink = False
+
+    # 存储源目录与目的目录关系
+    _dirconf: Dict[str, Optional[Path]] = {}
+    # 存储源目录转移方式
+    _transferconf: Dict[str, Optional[str]] = {}
+    # 退出事件
+    _event = threading.Event()
 
     def init_plugin(self, config: dict = None):
         # 清空配置
         self._dirconf = {}
-        self._coverconf = {}
+        self._transferconf = {}
+        self._medias = {}
         self._img_error_cache = {}
         self._search_error_cache = {}
         self._name_error_cache = {}
-        self._storagechain = StorageChain()
 
+        # 读取配置
         if config:
             self._enabled = config.get("enabled")
-            self._onlyonce = config.get("onlyonce")
-            self._link_pass = config.get("link_pass")
-            self._interval = int(config.get("interval"))
-            self._collection_size = int(config.get("collection_size"))
-            self._notify = config.get("notify")
-            self._force = config.get("force")
             self._historysave = config.get("historysave")
+            self._notify = config.get("notify")
+            self._link_pass = config.get("link_pass")
             self._onlyscrape = config.get("onlyscrape")
-            self._update = config.get('update')
-            self._fixlink = config.get('fixlink')
-            self._monitor_confs = config.get("monitor_confs")
-            self._rename_title = config.get("rename_title")
-            self._exclude_keywords = config.get("exclude_keywords") or ""
-            self._polish_keywords = config.get("polish_keywords") or ""
-            self._transfer_type = config.get("transfer_type") or "link"
+            self._force = config.get("force")
+            self._cron = config.get("cron")
+            self._interval = config.get("interval") or 10
+            self._collection_size = config.get("collection_size") or 300
             self._storage_type = config.get("storage_type") or StorageSchema.Local.value
+            self._transfer_type = config.get("transfer_type") or "link"
+            self._monitor_confs = config.get("monitor_confs") or ""
+            self._rename_title = config.get("rename_title") or ""
+            self._polish_keywords = config.get("polish_keywords") or ""
+            self._exclude_keywords = config.get("exclude_keywords") or ""
+            self._onlyonce = config.get("onlyonce")
+            self._update = config.get("update")
+            self._fixlink = config.get("fixlink")
 
         # 停止现有任务
         self.stop_service()
 
+        if self._fixlink and not self._link_pass:
+            self._fixlink = False
+            self.__update_config()
+
         if self._enabled or self._onlyonce:
-            self._is_stoped = False
             # 线程池
             self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=6)
-            # 定时服务
+            # 定时服务管理器
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
             if self._notify:
                 # 追加入库消息统一发送服务
-                self._scheduler.add_job(self.send_msg, trigger='interval', seconds=15)
-
+                self._scheduler.add_job(self.send_msg, trigger='interval', seconds=30)
             # 读取目录配置
             monitor_confs = self._monitor_confs.split("\n")
             if not monitor_confs:
@@ -170,8 +187,8 @@ class PlayletPolishScrape(_PluginBase):
                     # 检查媒体库目录是不是下载目录的子目录
                     try:
                         if target_dir and Path(target_dir).is_relative_to(Path(source_dir)):
-                            logger.warn(f"{target_dir} 是下载目录 {source_dir} 的子目录，无法监控")
-                            self.systemmessage.put(f"{target_dir} 是下载目录 {source_dir} 的子目录，无法监控")
+                            logger.warn(f"{target_dir} 是监控目录 {source_dir} 的子目录，无法监控")
+                            self.systemmessage.put(f"{target_dir} 是下载目录 {source_dir} 的子目录，无法监控", title=self.plugin_name)
                             continue
                     except Exception as e:
                         logger.debug(f"无法监控 {e}")
@@ -201,24 +218,49 @@ class PlayletPolishScrape(_PluginBase):
                                      """)
                         else:
                             logger.error(f"{source_dir} 启动目录监控失败：{err_msg}")
-                        self.systemmessage.put(f"{source_dir} 启动目录监控失败：{err_msg}")
+                        self.systemmessage.put(f"{source_dir} 启动目录监控失败：{err_msg}", title=self.plugin_name)
 
             # 运行一次定时服务
             if self._onlyonce:
-                logger.info("短剧监控服务启动，立即运行一次")
+                logger.info("目录监控服务启动，立即运行一次")
                 self._scheduler.add_job(func=self.sync_all, trigger='date',
                                         run_date=datetime.datetime.now(
-                                            tz=pytz.timezone(settings.TZ)) + datetime.timedelta(seconds=3),
-                                        name="短剧监控全量执行")
+                                            tz=pytz.timezone(settings.TZ)) + datetime.timedelta(seconds=3)
+                                        )
                 # 关闭一次性开关
                 self._onlyonce = False
                 # 保存配置
                 self.__update_config()
 
-            # 启动任务
+            # 启动定时服务
             if self._scheduler.get_jobs():
                 self._scheduler.print_jobs()
                 self._scheduler.start()
+
+    def __update_config(self):
+        """
+        更新配置
+        """
+        self.update_config({
+            "enabled": self._enabled,
+            "historysave": self._historysave,
+            "notify": self._notify,
+            "link_pass": self._link_pass,
+            "onlyscrape": self._onlyscrape,
+            "force": self._force,
+            "cron": self._cron,
+            "interval": self._interval,
+            "collection_size": self._collection_size,
+            "storage_type": self._storage_type,
+            "transfer_type": self._transfer_type,
+            "monitor_confs": self._monitor_confs,
+            "rename_title": self._rename_title,
+            "polish_keywords": self._polish_keywords,
+            "exclude_keywords": self._exclude_keywords,
+            "onlyonce": self._onlyonce,
+            "update": self._update,
+            "fixlink": self._fixlink,
+        })
 
     def __is_check_pass(self, path_str: str) -> bool:
         """
@@ -258,25 +300,42 @@ class PlayletPolishScrape(_PluginBase):
 
         return False
 
+    @eventmanager.register(EventType.PluginAction)
+    def remote_sync(self, event: Event):
+        """
+        远程全量同步
+        """
+        if event:
+            event_data = event.event_data
+            if not event_data or event_data.get("action") != "playletpolishscrape":
+                return
+            self.post_message(channel=event.event_data.get("channel"),
+                              title="开始短剧整理刮削 ...",
+                              userid=event.event_data.get("user"))
+        self.sync_all()
+        if event:
+            self.post_message(channel=event.event_data.get("channel"),
+                              title="短剧整理刮削完成！", userid=event.event_data.get("user"))
+
     def sync_all(self):
         """
-        立即运行一次，全量同步目录中所有文件
+        立即运行一次，根据关键字同步目录中所有文件
         """
-        logger.info("开始全量同步短剧监控目录 ...")
+        logger.info("开始全量整理 ...")
         # 遍历所有监控目录
-        for mon_path in self._dirconf.keys():
+        for source_dir in self._dirconf.keys():
             # 遍历目录下所有文件
-            for file_path in SystemUtils.list_files(Path(mon_path), settings.RMT_MEDIAEXT):
+            for file_path in SystemUtils.list_files(Path(source_dir), settings.RMT_MEDIAEXT):
                 if self._is_stoped:
                     return
 
                 if self.__is_check_pass(str(file_path)):
                     continue
-
+                logger.debug(f"file_path={file_path}")
                 self.__handle_file(is_directory=Path(file_path).is_dir(),
                                    event_path=str(file_path),
-                                   source_dir=mon_path)
-        logger.info("全量同步短剧监控目录完成！")
+                                   source_dir=source_dir)
+        logger.info("全量整理完成！")
 
     def event_handler(self, event, source_dir: str, event_path: str):
         """
@@ -288,7 +347,7 @@ class PlayletPolishScrape(_PluginBase):
         if self._is_stoped:
             return
 
-        # 回收站及隐藏的文件不处理
+        # 回收站的文件不处理
         if (event_path.find("/@Recycle") != -1
                 or event_path.find("/#recycle") != -1
                 or event_path.find("/@eaDir") != -1):
@@ -340,7 +399,7 @@ class PlayletPolishScrape(_PluginBase):
 
         def _to_chinese_tv_name(title: str) -> str:
             tv_name = ""
-            for word in re.split(r'[ .-]', title):
+            for word in re.split(r'[ .\-~·]', title):
                 if StringUtils.is_chinese(word):
                     tv_name += f"{word} "
             logger.info(f'chinese_tv_name={tv_name}')
@@ -430,209 +489,207 @@ class PlayletPolishScrape(_PluginBase):
         dest_dir = self._dirconf.get(source_dir)
         fileitem = self._storagechain.get_file_item(self._storage_type, Path(event_path))
         logger.debug(f"fileitem：{fileitem}")
-        # 元数据
-        try:
-            file_meta, tv_path = self.__meta_complement(is_directory, event_path)
-        except Exception as e:
-            logger.error(f"识别元数据出错：{e}")
-            return None
-        if not file_meta:
-            return
-        metadict = file_meta.to_dict()
-        logger.debug(f"元数据：{metadict}")
-        if not file_meta.name:
-            logger.error(f"{Path(event_path).name} 无法识别有效信息")
-            return
 
-        # 检查是否有集数
-        if file_meta.begin_episode is None:
-            # 如果有title和year，说明是连续剧，将集数设置为1
-            if file_meta.name and file_meta.year:
-                file_meta.begin_episode = 1
-            else:
-                # 没有集数且目录里只有一个媒体文件，将集数设置为1
-                if is_directory:
-                    _fileitem = fileitem
-                else:
-                    _fileitem = self._storagechain.get_file_item(self._storage_type, Path(event_path).parent)
-                dir_fileitems = self._storagechain.list_files(_fileitem)
-                _media_num = 0
-                for fi in dir_fileitems:
-                    if f'.{fi.extension}' in settings.RMT_MEDIAEXT:
-                        _media_num += 1
-                if _media_num == 1:
-                    file_meta.begin_episode = 1
 
-        try:
-            # 从选择的站点识别媒体信息
-            _begin_season = file_meta.begin_season # 识别会将begin_season修改，先保存
-            if self._update:
-                use_cache = False
-                self._update = False
-                self.__update_config()
-            else:
-                use_cache = True
-            mediainfo = self.chain.recognize_media(meta=file_meta, mtype=MediaType.TV, cache=use_cache)
-            if not mediainfo:
-                logger.error(f"未查找到媒体信息")
-                if self._historysave:
-                    # 新增转移失败历史记录
-                    self._transferhis.add_fail(
-                        fileitem=fileitem,
-                        mode=self._transfer_type,
-                        meta=file_meta,
-                        mediainfo=None,
-                        transferinfo=None
-                    )
-                return
-            file_meta.begin_season = _begin_season # 恢复
-
-            if not mediainfo.season:
-                mediainfo.season = 1
-            # 短剧合集放在特殊季
-            if file_meta.begin_season == 0:
-                mediainfo.season = 0
-            logger.debug(f"媒体信息：{mediainfo}")
-
-            if not StringUtils.is_all_chinese(mediainfo.title):
-                file_meta = meta_search_tv_name(file_meta, mediainfo.title)
-                mediainfo.title = file_meta.cn_name
-            if file_meta.cn_name in self._name_error_cache.keys():
-                if self._name_error_cache.get(file_meta.cn_name) > self._error_count:
-                    logger.info(f"剧名（{file_meta.cn_name}）搜索错误次数超过{self._error_count}次")
-                    return
-            else:
-                self._name_error_cache[file_meta.cn_name] = 0
+        with lock:
+            # 元数据
             try:
-                # 查询转移目的目录
-                target_dir = DirectoryHelper().get_dir(mediainfo, src_path=Path(source_dir))
-                if not target_dir or not target_dir.library_path:
-                    target_dir = TransferDirectoryConf()
-                    target_dir.library_path = dest_dir
-                    target_dir.transfer_type = self._transfer_type
-                    target_dir.renaming = True
-                    target_dir.notify = False
-                    target_dir.overwrite_mode = 'never'
-                    target_dir.library_storage = self._storage_type
+                file_meta, tv_path = self.__meta_complement(is_directory, event_path)
+            except Exception as e:
+                logger.error(f"识别元数据出错：{e}")
+                return None
+            if not file_meta:
+                return
+            logger.debug(f"元数据：{file_meta}")
+            if not file_meta.name:
+                logger.error(f"{Path(event_path).name} 无法识别有效信息")
+                return
+
+            # 检查是否有集数
+            if file_meta.begin_episode is None:
+                # 如果有title和year，说明是连续剧，将集数设置为1
+                if file_meta.name and file_meta.year:
+                    file_meta.begin_episode = 1
                 else:
-                    target_dir.transfer_type = self._transfer_type
+                    # 没有集数且目录里只有一个媒体文件，将集数设置为1
+                    if is_directory:
+                        _fileitem = fileitem
+                    else:
+                        _fileitem = self._storagechain.get_file_item(self._storage_type, Path(event_path).parent)
+                    dir_fileitems = self._storagechain.list_files(_fileitem)
+                    _media_num = 0
+                    for fi in dir_fileitems:
+                        if f'.{fi.extension}' in settings.RMT_MEDIAEXT:
+                            _media_num += 1
+                    if _media_num == 1:
+                        file_meta.begin_episode = 1
 
-                if self._force:
-                    target_dir.overwrite_mode = 'always'
-
-                if not target_dir.library_path:
-                    logger.error(f"未配置监控目录 {source_dir} 的目的目录")
+            try:
+                # 从选择的站点识别媒体信息
+                _begin_season = file_meta.begin_season # 识别会将begin_season修改，先保存
+                if self._update:
+                    use_cache = False
+                    self._update = False
+                    self.__update_config()
+                else:
+                    use_cache = True
+                mediainfo = self.chain.recognize_media(meta=file_meta, mtype=MediaType.TV, cache=use_cache)
+                if not mediainfo:
+                    logger.error(f"未查找到媒体信息")
+                    if self._historysave:
+                        # 新增转移失败历史记录
+                        self._transferhis.add_fail(
+                            fileitem=fileitem,
+                            mode=self._transfer_type,
+                            meta=file_meta,
+                            mediainfo=None,
+                            transferinfo=None
+                        )
                     return
 
-                # 整理
-                if '&' in event_path:
-                    fileitem.path = fileitem.path.replace('/&', '\&')
-                    logger.info(f"路径：{fileitem.path}")
-                if self._onlyscrape:
-                    # 只刮削，就认为改文件已整理过
-                    transferinfo: TransferInfo = TransferInfo()
-                    transferinfo.success = True
-                    transferinfo.transfer_type = self._transfer_type
-                    transferinfo.target_item = StorageChain().get_file_item(self._storage_type, Path(fileitem.path).parent)
-                    transferinfo.target_diritem = StorageChain().get_file_item(self._storage_type, Path(transferinfo.target_item.path).parent)
+                if not StringUtils.is_all_chinese(mediainfo.title):
+                    file_meta = meta_search_tv_name(file_meta, mediainfo.title)
+                    mediainfo.title = file_meta.cn_name
+                file_meta.begin_season = _begin_season # 恢复
+
+                if not mediainfo.season:
+                    mediainfo.season = 1
+                # 短剧合集放在特殊季
+                if file_meta.begin_season == 0:
+                    mediainfo.season = 0
+                logger.debug(f"媒体信息：{mediainfo}")
+
+                if file_meta.cn_name in self._name_error_cache.keys():
+                    if self._name_error_cache.get(file_meta.cn_name) > self._error_count:
+                        logger.info(f"剧名（{file_meta.cn_name}）搜索错误次数超过{self._error_count}次")
+                        return
                 else:
-                    _end_episode = file_meta.end_episode # 传输会将end_episode清空，先保存
-                    transferinfo: TransferInfo = self.chain.transfer(mediainfo=mediainfo,
-                                                                    fileitem=fileitem,
-                                                                    target_directory=target_dir,
-                                                                    meta=file_meta)
-                    file_meta.end_episode = _end_episode
-                if not transferinfo:
-                    logger.error("文件转移模块运行错误")
-                    return
+                    self._name_error_cache[file_meta.cn_name] = 0
+                try:
+                    # 查询转移目的目录
+                    target_dir = DirectoryHelper().get_dir(mediainfo, src_path=Path(source_dir))
+                    if not target_dir or not target_dir.library_path:
+                        target_dir = TransferDirectoryConf()
+                        target_dir.library_path = dest_dir
+                        target_dir.transfer_type = self._transfer_type
+                        target_dir.renaming = True
+                        target_dir.notify = False
+                        target_dir.overwrite_mode = 'never'
+                        target_dir.library_storage = self._storage_type
+                    else:
+                        target_dir.transfer_type = self._transfer_type
 
-                # 检查媒体库同名文件是不是一致，一致使用硬链接处理文件，不增加失败记录了
-                _link_check_ok = False
-                if self._fixlink and not transferinfo.success and transferinfo.message.startswith('媒体库存在同名文件'):
-                    src_file = transferinfo.fileitem.path
-                    dest_file = transferinfo.target_item.path
-                    temp_file = f"{src_file}.back"
-                    logger.info("媒体库同名文件，检查文件大小 ...")
-                    try:
-                        if filecmp.cmp(src_file, dest_file):
-                            os.rename(src_file, temp_file)
-                            os.link(dest_file, src_file)
-                            os.remove(temp_file)
-                            _link_check_ok = True
-                            logger.info(f"硬链接成功：{src_file} <-- {dest_file}")
-                    except Exception as e:
-                        logger.error(f"修复硬链接错误：{e}")
-                        if os.path.exists(temp_file):
-                            os.rename(temp_file, src_file)
+                    if self._force:
+                        target_dir.overwrite_mode = 'always'
 
-                if not _link_check_ok:
-                    if not self._historysave and not transferinfo.success:
-                        logger.warn(f"{fileitem.name} 入库失败：{transferinfo.message}")
+                    if not target_dir.library_path:
+                        logger.error(f"未配置监控目录 {source_dir} 的目的目录")
                         return
 
-                    if self._historysave:
+                    # 整理
+                    if '&' in event_path:
+                        fileitem.path = fileitem.path.replace('/&', '\&')
+                        logger.info(f"路径：{fileitem.path}")
+                    if self._onlyscrape:
+                        # 只刮削，就认为改文件已整理过
+                        transferinfo: TransferInfo = TransferInfo()
+                        transferinfo.success = True
+                        transferinfo.transfer_type = self._transfer_type
+                        transferinfo.target_item = StorageChain().get_file_item(self._storage_type, Path(fileitem.path).parent)
+                        transferinfo.target_diritem = StorageChain().get_file_item(self._storage_type, Path(transferinfo.target_item.path).parent)
+                    else:
+                        _end_episode = file_meta.end_episode # 传输会将end_episode清空，先保存
+                        transferinfo: TransferInfo = self.chain.transfer(mediainfo=mediainfo,
+                                                                        fileitem=fileitem,
+                                                                        target_directory=target_dir,
+                                                                        meta=file_meta)
+                        file_meta.end_episode = _end_episode
+                    if not transferinfo:
+                        logger.error("文件转移模块运行错误")
+                        return
 
-                        if not transferinfo.success:
-                            # 转移失败
+                    # 检查媒体库同名文件是不是一致，一致使用硬链接处理文件，不增加失败记录了
+                    _link_check_ok = False
+                    if self._fixlink and not transferinfo.success and transferinfo.message.startswith('媒体库存在同名文件'):
+                        src_file = transferinfo.fileitem.path
+                        dest_file = transferinfo.target_item.path
+                        temp_file = f"{src_file}.back"
+                        logger.info("媒体库同名文件，检查文件大小 ...")
+                        try:
+                            if filecmp.cmp(src_file, dest_file):
+                                os.rename(src_file, temp_file)
+                                os.link(dest_file, src_file)
+                                os.remove(temp_file)
+                                _link_check_ok = True
+                                logger.info(f"硬链接成功：{src_file} <-- {dest_file}")
+                        except Exception as e:
+                            logger.error(f"修复硬链接错误：{e}")
+                            if os.path.exists(temp_file):
+                                os.rename(temp_file, src_file)
+
+                    if not _link_check_ok:
+                        if not self._historysave and not transferinfo.success:
                             logger.warn(f"{fileitem.name} 入库失败：{transferinfo.message}")
-                            # 新增转移失败历史记录
-                            self._transferhis.add_fail(
-                                fileitem=fileitem,
-                                mode=transferinfo.transfer_type,
-                                meta=file_meta,
-                                mediainfo=mediainfo,
-                                transferinfo=transferinfo
-                            )
                             return
+
+                        if self._historysave:
+
+                            if not transferinfo.success:
+                                # 转移失败
+                                logger.warn(f"{fileitem.name} 入库失败：{transferinfo.message}")
+                                # 新增转移失败历史记录
+                                self._transferhis.add_fail(
+                                    fileitem=fileitem,
+                                    mode=transferinfo.transfer_type,
+                                    meta=file_meta,
+                                    mediainfo=mediainfo,
+                                    transferinfo=transferinfo
+                                )
+                                return
+                            else:
+                                # 新增转移成功历史记录
+                                self._transferhis.add_success(
+                                    fileitem=fileitem,
+                                    mode=transferinfo.transfer_type,
+                                    meta=file_meta,
+                                    mediainfo=mediainfo,
+                                    transferinfo=transferinfo
+                                )
+
+                except Exception as e:
+                    logger.error(f"{event_path} 刮削失败, 请重新配置运行插件: {e}")
+                    self._is_stoped = True
+                    return
+
+                # 查看tv_path路径下是否有jpg文件
+                self.__scrape_metadata(file_meta, transferinfo, mediainfo=mediainfo, img_path=self.__get_dir_image(tv_path))
+
+                self._name_error_cache[file_meta.cn_name] = 0
+
+                if self._notify:
+                    # 发送消息汇总
+                    media_list = self._medias.get(mediainfo.title_year) or {}
+                    if media_list:
+                        media_files = media_list.get("files") or []
+                        if media_files:
+                            if str(event_path) not in media_files:
+                                media_files.append(str(event_path))
                         else:
-                            # 新增转移成功历史记录
-                            self._transferhis.add_success(
-                                fileitem=fileitem,
-                                mode=transferinfo.transfer_type,
-                                meta=file_meta,
-                                mediainfo=mediainfo,
-                                transferinfo=transferinfo
-                            )
+                            media_files = [str(event_path)]
+                        media_list = {
+                            "files": media_files,
+                            "time": datetime.datetime.now()
+                        }
+                    else:
+                        media_list = {
+                            "files": [str(event_path)],
+                            "time": datetime.datetime.now()
+                        }
+                    self._medias[mediainfo.title_year] = media_list
 
             except Exception as e:
-                logger.error(f"{event_path} 刮削失败, 请重新配置运行插件: {e}")
+                logger.error(f"整理过程发生错误: {e}")
                 self._is_stoped = True
-                return
-
-            # 查看tv_path路径下是否有jpg文件
-            self.__scrape_metadata(file_meta, transferinfo, mediainfo=mediainfo, img_path=self.__get_dir_image(tv_path))
-
-            self._name_error_cache[file_meta.cn_name] = 0
-
-            # 广播事件
-            # self.eventmanager.send_event(EventType.TransferComplete, {
-            #     'meta': file_meta,
-            #     'mediainfo': mediainfo,
-            #     'transferinfo': transferinfo
-            # })
-            if self._notify:
-                # 发送消息汇总
-                media_list = self._medias.get(mediainfo.title_year) or {}
-                if media_list:
-                    media_files = media_list.get("files") or []
-                    if media_files:
-                        if str(event_path) not in media_files:
-                            media_files.append(str(event_path))
-                    else:
-                        media_files = [str(event_path)]
-                    media_list = {
-                        "files": media_files,
-                        "time": datetime.datetime.now()
-                    }
-                else:
-                    media_list = {
-                        "files": [str(event_path)],
-                        "time": datetime.datetime.now()
-                    }
-                self._medias[mediainfo.title_year] = media_list
-        except Exception as e:
-            logger.error(f"event_handler_created error: {e}")
-            self._is_stoped = True
 
     def __scrape_all_img(self, thumb_path, transferinfo, season: int = 1, scraping_switchs: dict = None):
         '''
@@ -723,38 +780,6 @@ class PlayletPolishScrape(_PluginBase):
                     self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
             except RequestException as e:
                 logger.error(f"下载图片失败：{e}")
-
-    def send_msg(self):
-        """
-        定时检查是否有媒体处理完，发送统一消息
-        """
-        if self._notify:
-            if not self._medias or not self._medias.keys():
-                return
-
-            # 遍历检查是否已刮削完，发送消息
-            for medis_title_year in list(self._medias.keys()):
-                media_list = self._medias.get(medis_title_year)
-                logger.info(f"开始处理媒体 {medis_title_year} 消息")
-
-                if not media_list:
-                    continue
-
-                # 获取最后更新时间
-                last_update_time = media_list.get("time")
-                media_files = media_list.get("files")
-                if not last_update_time or not media_files:
-                    continue
-
-                # 判断剧集最后更新时间距现在是已超过10秒或者电影，发送消息
-                if (datetime.datetime.now() - last_update_time).total_seconds() > int(self._interval):
-                    # 发送消息
-                    self.post_message(mtype=NotificationType.Organize,
-                                      title=f"{medis_title_year} 共{len(media_files)}集已入库",
-                                      text="类别：短剧")
-                    # 发送完消息，移出key
-                    del self._medias[medis_title_year]
-                    continue
 
     def __save_poster(self, input_path, poster_path, cover_conf):
         """
@@ -1005,47 +1030,99 @@ class PlayletPolishScrape(_PluginBase):
 
         return max_image
 
-    def __update_config(self):
+    def send_msg(self):
         """
-        更新配置
+        定时检查是否有媒体处理完，发送统一消息
         """
-        self.update_config({
-            "enabled": self._enabled,
-            "polish_keywords": self._polish_keywords,
-            "exclude_keywords": self._exclude_keywords,
-            "transfer_type": self._transfer_type,
-            "storage_type": self._storage_type,
-            "onlyonce": self._onlyonce,
-            "onlyscrape": self._onlyscrape,
-            "update": self._update,
-            "fixlink": self._fixlink,
-            "historysave": self._historysave,
-            "force": self._force,
-            "link_pass": self._link_pass,
-            "interval": self._interval,
-            "collection_size": self._collection_size,
-            "notify": self._notify,
-            "monitor_confs": self._monitor_confs,
-            "rename_title": self._rename_title,
-        })
+        if self._notify:
+            if not self._medias or not self._medias.keys():
+                return
+
+            # 遍历检查是否已刮削完，发送消息
+            for medis_title_year in list(self._medias.keys()):
+                media_list = self._medias.get(medis_title_year)
+                logger.info(f"开始处理媒体 {medis_title_year} 消息")
+
+                if not media_list:
+                    continue
+
+                # 获取最后更新时间
+                last_update_time = media_list.get("time")
+                media_files = media_list.get("files")
+                if not last_update_time or not media_files:
+                    continue
+
+                # 判断剧集最后更新时间距现在是已超过10秒或者电影，发送消息
+                if (datetime.datetime.now() - last_update_time).total_seconds() > int(self._interval):
+                    # 发送消息
+                    self.post_message(mtype=NotificationType.Organize,
+                                      title=f"{medis_title_year} 共{len(media_files)}集已入库",
+                                      text="类别：短剧")
+                    # 发送完消息，移出key
+                    del self._medias[medis_title_year]
+                    continue
 
     def get_state(self) -> bool:
         return self._enabled
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
-        pass
+        """
+        定义远程控制命令
+        :return: 命令关键字、事件、描述、附带数据
+        """
+        return [{
+            "cmd": "/playletpolishscrape",
+            "event": EventType.PluginAction,
+            "desc": "短剧整理刮削",
+            "category": "整理",
+            "data": {
+                "action": "playletpolishscrape"
+            }
+        }]
 
     def get_api(self) -> List[Dict[str, Any]]:
-        pass
+        return [{
+            "path": "/playletpolishscrape",
+            "endpoint": self.sync,
+            "methods": ["GET"],
+            "summary": self.plugin_name,
+            "description": self.plugin_desc,
+        }]
+
+    def get_service(self) -> List[Dict[str, Any]]:
+        """
+        注册插件公共服务
+        [{
+            "id": "服务ID",
+            "name": "服务名称",
+            "trigger": "触发器：cron/interval/date/CronTrigger.from_crontab()",
+            "func": self.xxx,
+            "kwargs": {} # 定时器参数
+        }]
+        """
+        if self._enabled and self._cron:
+            return [{
+                "id": "LinkMonitor",
+                "name": "短剧整理刮削定时服务",
+                "trigger": CronTrigger.from_crontab(self._cron),
+                "func": self.sync_all,
+                "kwargs": {}
+            }]
+
+    def sync(self, apikey: str) -> schemas.Response:
+        """
+        API调用目录同步
+        """
+        if apikey != settings.API_TOKEN:
+            return schemas.Response(success=False, message="API密钥错误")
+        self.sync_all()
+        return schemas.Response(success=True)
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
         拼装插件配置页面，需要返回两块数据：1、页面配置；2、数据结构
         """
-        # 站点选项
-        site_options = [{"title": site.get("name"), "value": site.get("id")}
-                        for site in SitesHelper().get_indexers()]
         storage_list = [{'title': storage.name, 'value': storage.value} for storage in StorageSchema]
         return [
             {
@@ -1198,7 +1275,24 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSelect',
+                                        'props': {
+                                            'model': 'storage_type',
+                                            'label': '存储类型',
+                                            'items': storage_list
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
                                 },
                                 'content': [
                                     {
@@ -1220,15 +1314,15 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 4
                                 },
                                 'content': [
                                     {
-                                        'component': 'VSelect',
+                                        'component': 'VTextField',
                                         'props': {
-                                            'model': 'storage_type',
-                                            'label': '存储类型',
-                                            'items': storage_list
+                                            'model': 'cron',
+                                            'label': '定时全量同步周期',
+                                            'placeholder': '5位cron表达式，留空关闭'
                                         }
                                     }
                                 ]
@@ -1271,7 +1365,7 @@ class PlayletPolishScrape(_PluginBase):
                                         'props': {
                                             'model': 'rename_title',
                                             'label': '标题重命名',
-                                            'rows': 2,
+                                            'rows': 3,
                                             'placeholder': '原标题=>新标题'
                                         }
                                     }
@@ -1286,6 +1380,7 @@ class PlayletPolishScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
+                                    'md': 6
                                 },
                                 'content': [
                                     {
@@ -1298,16 +1393,12 @@ class PlayletPolishScrape(_PluginBase):
                                         }
                                     }
                                 ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
+                            },
                             {
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
+                                    'md': 6
                                 },
                                 'content': [
                                     {
@@ -1422,22 +1513,23 @@ class PlayletPolishScrape(_PluginBase):
             }
         ], {
             "enabled": False,
-            "onlyonce": False,
-            "link_pass": False,
-            "notify": False,
-            "force": False,
             "historysave": True,
+            "notify": False,
+            "link_pass": False,
             "onlyscrape": False,
-            "update": False,
-            "fixlink": False,
+            "force": False,
+            "cron": "",
             "interval": 10,
             "collection_size": 300,
-            "monitor_confs": "",
+            "storage_type": "local",
+            "transfer_type": "link",
+            "monitor_dirs": "",
             "rename_title": "",
             "polish_keywords": "",
             "exclude_keywords": "",
-            "transfer_type": "link",
-            "storage_type": "local"
+            "onlyonce": False,
+            "update": False,
+            "fixlink": False,
         }
 
     def get_page(self) -> List[dict]:
@@ -1447,23 +1539,13 @@ class PlayletPolishScrape(_PluginBase):
         """
         退出插件
         """
-        try:
-            if self._thread_pool:
-                self._thread_pool.shutdown(wait=True)
-                self._thread_pool = None
-        except Exception as e:
-            self._thread_pool = None
-            logger.error(f"线程池关闭失败：{e}")
 
-        try:
-            if self._scheduler:
-                self._scheduler.remove_all_jobs()
-                if self._scheduler.running:
-                    self._scheduler.shutdown()
-                self._scheduler = None
-        except Exception as e:
-            self._scheduler = None
-            logger.error(f"退出插件失败：{e}")
+        if self._thread_pool:
+            try:
+                self._thread_pool.shutdown(wait=True)
+            except Exception as e:
+                logger.error(f"线程池关闭失败：{e}")
+            self._thread_pool = None
 
         if self._observer:
             for observer in self._observer:
@@ -1472,8 +1554,15 @@ class PlayletPolishScrape(_PluginBase):
                     observer.join()
                 except Exception as e:
                     print(str(e))
-                    logger.error(f"停止监听失败：{e}")
-        self._observer = []
+            self._observer = []
+
+        if self._scheduler:
+            self._scheduler.remove_all_jobs()
+            if self._scheduler.running:
+                self._event.set()
+                self._scheduler.shutdown()
+                self._event.clear()
+            self._scheduler = None
 
 def to_pinyin_with_title(s):
     '''
@@ -1516,7 +1605,7 @@ def meta_search_tv_name(file_meta: MetaInfoPath, tv_name: str, is_compilations: 
         tv_name = re.sub(r"【.*】", '', tv_name)
     tv_name = re.sub(r"\[.*\]", '', tv_name)
     logger.info(f"尝试识别媒体信息：{tv_name}")
-    match = re.match(r'^(.*?)\(([全共]?\d+)[集话話期幕][全完]?\)(?:&?(.+))?', tv_name)
+    match = re.match(r'^(.*?)\(?([全共]?\d+)[集话話期幕][全完]?\)?(?:&?(.+))?', tv_name)
     if match:
         title = match.group(1).strip()
         if title[0] == '(':
