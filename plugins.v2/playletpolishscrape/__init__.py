@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.0.0"
+    plugin_version = "3.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -410,9 +410,15 @@ class PlayletPolishScrape(_PluginBase):
         file_meta = MetaInfoPath(_path)
         org_string = file_meta.org_string
 
+        se_match = re.search(r'S(\d+)E(\d+)', org_string)
+        if se_match:
+            file_meta.begin_season = int(se_match.group(1))
+            file_meta.begin_episode = int(se_match.group(2))
+
+        logger.info(f"file_meta={file_meta}")
         # 判断是不是合集，使用父目录名和文件大小判断
         if _path.parent.name in ['合集', '合集版', '长篇', '长篇版', '长篇合集', '合集长篇'] \
-                    or (_path.is_file() and _path.stat().st_size >= self._collection_size * 1024 * 1024):
+                    or (file_meta.begin_episode is None and _path.is_file() and _path.stat().st_size >= self._collection_size * 1024 * 1024):
             logger.info(f"合集目录，查看父目录是否是电视剧目录：{media_path}")
             parent_dir = _path.parent
             is_tv = False
