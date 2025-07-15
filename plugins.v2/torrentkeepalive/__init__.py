@@ -23,7 +23,7 @@ class TorrentKeepAlive(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -295,16 +295,19 @@ class TorrentKeepAlive(_PluginBase):
         for service in services:
             downloader: Optional[Union[Qbittorrent, Transmission]] = service.instance if service else None
             if not downloader:
-                return
+                continue
 
             keep_alive_torrents = self._keep_alive_torrents.get(service.name)
             if keep_alive_torrents:
                 logger.info(f"下载器 {service.name} 还有种子{len(keep_alive_torrents)}个等待重新开始，下一次任务再检查")
-                return
+                continue
 
             keep_alive_torrents = []
             torrents = downloader.get_completed_torrents()
             for torrent in torrents:
+                if self._event.is_set():
+                    logger.info(f"种子保活服务停止")
+                    return
                 for status in torrent.tracker_stats:
                     if status.next_announce_time == 0:
                         logger.info(f"{torrent}")
@@ -316,7 +319,7 @@ class TorrentKeepAlive(_PluginBase):
                 logger.info(f"下载器 {service.name} 未正常做种数：{torrent_cnt}")
             else:
                 logger.info(f"下载器 {service.name} 做种正常")
-                return
+                continue
 
             if not downloader.stop_torrents(keep_alive_torrents):
                 logger.error(f"下载器 {service.name} 停止种子失败，共 {torrent_cnt} 个种子")

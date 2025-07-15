@@ -28,7 +28,7 @@ class FilterSiteTorrent(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -184,8 +184,8 @@ class FilterSiteTorrent(_PluginBase):
         if self.get_state():
             return [
                 {
-                    "id": "TorrentTransfer",
-                    "name": "转移做种服务",
+                    "id": "FilterSiteTorrent",
+                    "name": "站点种子转移做种服务",
                     "trigger": CronTrigger.from_crontab(self._cron),
                     "func": self.transfer,
                     "kwargs": {}
@@ -698,9 +698,9 @@ class FilterSiteTorrent(_PluginBase):
 
     def transfer(self):
         """
-        开始转移做种
+        开始筛选站点转移做种
         """
-        logger.info("开始转移做种任务 ...")
+        logger.info("开始筛选站点转移做种任务 ...")
 
         if not self.__validate_config():
             return
@@ -712,7 +712,7 @@ class FilterSiteTorrent(_PluginBase):
             from_downloader: Optional[Union[Qbittorrent, Transmission]] = from_service.instance if from_service else None
             to_downloader: Optional[Union[Qbittorrent, Transmission]] = to_service.instance if to_service else None
             if not from_downloader or not to_downloader:
-                return
+                continue
 
             logger.info(f"准备 {from_downloader} => {to_downloader} ...")
             torrents = from_downloader.get_completed_torrents()
@@ -720,7 +720,7 @@ class FilterSiteTorrent(_PluginBase):
                 logger.info(f"下载器 {from_service.name} 已完成种子数：{len(torrents)}")
             else:
                 logger.info(f"下载器 {from_service.name} 没有已完成种子")
-                return
+                continue
 
             # 过滤种子，记录保存目录
             trans_torrents = []
@@ -949,13 +949,13 @@ class FilterSiteTorrent(_PluginBase):
                 if self._notify:
                     self.post_message(
                         mtype=NotificationType.SiteMessage,
-                        title="【转移做种任务执行完成】",
-                        text=f"总数：{total}，成功：{success}，失败：{fail}，跳过：{skip}，删除重复：{del_dup}"
+                        title="【筛选站点转移做种任务执行完成】",
+                        text=f"下载器 {from_service.name}：总数：{total}，成功：{success}，失败：{fail}，跳过：{skip}，删除重复：{del_dup}"
                     )
             else:
                 logger.info(f"{from_service.name} 没有需要转移的种子")
 
-        logger.info("转移做种任务执行完成")
+        logger.info("筛选站点转移做种任务执行完成")
 
     def __add_recheck_torrents(self, service: ServiceInfo, download_id: str):
         # 追加校验任务
