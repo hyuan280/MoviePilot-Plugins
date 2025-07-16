@@ -28,7 +28,7 @@ class FilterSiteTorrent(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.1"
+    plugin_version = "1.0.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -643,11 +643,11 @@ class FilterSiteTorrent(_PluginBase):
         """
         添加下载任务
         """
-        if not service or not service.instance:
+        if not to_service or not to_service.instance:
             return
-        downloader = service.instance
+        downloader = to_service.instance
         downloader_helper = DownloaderHelper()
-        if downloader_helper.is_downloader("qbittorrent", service=service):
+        if downloader_helper.is_downloader("qbittorrent", service=to_service):
             # 生成随机Tag
             tag = StringUtils.generate_random_str(10)
             if self._remainoldtag:
@@ -676,7 +676,7 @@ class FilterSiteTorrent(_PluginBase):
                     logger.error(f"{downloader} 下载任务添加成功，但获取任务信息失败！")
                     return None
             return torrent_hash
-        elif downloader_helper.is_downloader("transmission", service=service):
+        elif downloader_helper.is_downloader("transmission", service=to_service):
             # 添加任务
             if self._remainoldtag:
                 # 获取种子标签
