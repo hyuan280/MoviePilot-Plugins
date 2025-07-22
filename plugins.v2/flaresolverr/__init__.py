@@ -13,7 +13,7 @@ class FlareSolverr(_PluginBase):
     # 插件图标
     plugin_icon = "https://lsky.hy2zy.fun/uploads/1/2025-07-22/FlareSolverr.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -35,6 +35,9 @@ class FlareSolverr(_PluginBase):
             self._enabled = config.get('enabled')
             self._flaresolverr_url = config.get('flaresolverr_url')
             self._flaresolverr_timeout = config.get('flaresolverr_timeout')
+
+        if isinstance(self._flaresolverr_timeout, str):
+            self._flaresolverr_timeout = int(self._flaresolverr_timeout)
 
         if self.get_state():
             logger.info(f"配置FlareSolverr")
