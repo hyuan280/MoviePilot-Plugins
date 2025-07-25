@@ -1,13 +1,18 @@
+import time
+import re
 from typing import Tuple
 
 from ruamel.yaml import CommentedMap
 from lxml import etree
 
 from app.core.config import settings
+from app.core.event import EventManager, eventmanager, Event
+from app.schemas.types import EventType
 from app.log import logger
 from app.plugins.autosignin.sites import _ISiteSigninHandler
 from app.utils.http import RequestUtils
 from app.utils.string import StringUtils
+from app.db.site_oper import SiteOper
 
 
 class BitPorn(_ISiteSigninHandler):
@@ -17,6 +22,7 @@ class BitPorn(_ISiteSigninHandler):
 
     # 匹配的站点Url，每一个实现类都需要设置为自己的站点Url
     site_url = "https://bitporn.eu"
+    is_refresh = False
 
     @classmethod
     def match(cls, url: str) -> bool:
@@ -27,6 +33,16 @@ class BitPorn(_ISiteSigninHandler):
         """
         return True if StringUtils.url_equal(url, cls.site_url) else False
 
+    def fail_site_refresh(self, site_id):
+        self.is_refresh = True
+        logger.info("更新BitPorn站点的Cookie和UA，稍后重新签到")
+        eventmanager.send_event(EventType.PluginAction,
+                                {
+                                    "site_id": site_id,
+                                    "action": "site_refresh"
+                                })
+        time.sleep(120)
+
     def signin(self, site_info: CommentedMap) -> Tuple[bool, str]:
         """
         执行签到操作
@@ -34,9 +50,11 @@ class BitPorn(_ISiteSigninHandler):
         :return: 签到结果信息
         """
         site = site_info.get("name")
-        site_cookie = site_info.get("cookie")
-        ua = site_info.get("ua")
-        proxies = settings.PROXY if site_info.get("proxy") else None
+        site_id = site_info.get("id")
+        site_data = SiteOper.get(site_id)
+        site_cookie = site_data.cookie
+        ua = site_data.ua
+        proxies = settings.PROXY if site_data.proxy else None
 
         # 获取主页html
         html_res = RequestUtils(cookies=site_cookie,
@@ -44,7 +62,10 @@ class BitPorn(_ISiteSigninHandler):
                                 proxies=proxies
                                 ).get_res(url=self.site_url)
         if not html_res or html_res.status_code != 200:
-            logger.error(f"{site} 签到失败，请检查站点连通性")
+            if not self.is_refresh:
+                self.fail_site_refresh(site_id)
+                return self.signin(site_info)
+            logger.error(f"{site} 签到失败，请检查站点连通性{self.site_url}")
             return False, '签到失败，请检查站点连通性'
 
         if f"{self.site_url}/login" in html_res.text:
@@ -69,6 +90,9 @@ class BitPorn(_ISiteSigninHandler):
                                 proxies=proxies
                                 ).get_res(url=event_url)
         if not html_res or html_res.status_code != 200:
+            if not self.is_refresh:
+                self.fail_site_refresh(site_id)
+                return self.signin(site_info)
             logger.error(f"{site} 签到失败，请检查站点连通性")
             return False, '签到失败，请检查站点连通性'
 
@@ -97,8 +121,11 @@ class BitPorn(_ISiteSigninHandler):
                                 proxies=proxies
                                 ).post_res(url=f"{event_url}/claims", data={"_token": token})
         if not html_res or html_res.status_code != 200:
-            logger.error(f"{site} 签到失败，请检查站点连通性")
-            return False, '签到失败，请检查站点连通性'
+            if not self.is_refresh:
+                self.fail_site_refresh(site_id)
+                return self.signin(site_info)
+            logger.error(f"{site} 签到失败，Cookie已失效")
+            return False, '签到失败，Cookie已失效'
 
         self.__getbonus(html_res.text)
         return True, '签到成功'
@@ -108,15 +135,18 @@ class BitPorn(_ISiteSigninHandler):
         if not html:
             return
         last_brons = 0
+        brons_info = ""
         events = html.xpath('//i[contains(@class, "events__prize-message")]')
         if events:
             for event in events:
                 data = event.xpath("string(.)").strip()
+                data = re.sub(r'[\n\s]+', " ", data)
                 if data == 'Check back later!':
                     break
                 brons = data.split()[0]
                 if brons.isdigit():
                     last_brons = int(brons)
+                    brons_info = data
 
         if last_brons > 0:
-            logger.info(f"签到获取 {last_brons} 魔力")
+            logger.info(f"签到获取 {brons_info}")
