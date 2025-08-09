@@ -99,11 +99,12 @@
     "name": "自动认领种子",
     "description": "定时认领做种的种子",
     "labels": "种子, 站点",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "icon": "seed.png",
     "author": "hyuan280",
     "level": 2,
     "history": {
+      "v1.0.1": "增加根据种子大小和做种时间认领满足条件的种子",
       "v1.0.0": "定时认领做种的种子"
     }
   }
