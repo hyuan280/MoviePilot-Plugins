@@ -23,7 +23,7 @@ class TorrentKeepAlive(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -298,7 +298,10 @@ class TorrentKeepAlive(_PluginBase):
         new_run_time = datetime.now(tz=tz) + timedelta(seconds=seconds)
         existing_job = self._scheduler.get_job("restart_torrent")
         if existing_job:
-            old_run_time = existing_job.next_run_time
+            try:
+                old_run_time = existing_job.next_run_time  # 尝试新版本属性
+            except AttributeError:
+                old_run_time = existing_job.next_run_time()  # 回退到旧版本方法
 
             if old_run_time.tzinfo is None:
                 old_run_time = pytz.utc.localize(old_run_time)
@@ -375,6 +378,7 @@ class TorrentKeepAlive(_PluginBase):
         重新开始暂停的种子
         """
         logger.debug("开始重新做种...")
+        message_text = ""
         for name, ids in self._keep_alive_torrents.items():
             service = self.service_info(name)
             if not service:
@@ -386,22 +390,17 @@ class TorrentKeepAlive(_PluginBase):
                 continue
             if downloader.start_torrents(ids):
                 logger.info(f"下载器 {service.name} 共保活 {len(ids)} 个种子")
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage,
-                        title="【种子保活任务执行完成】",
-                        text=f"下载器 {service.name} 共保活 {len(ids)} 个种子"
-                        )
+                message_text += f"下载器 {service.name} 共保活 {len(ids)} 个种子\n"
             else:
                 logger.error(f"下载器 {service.name} 保活失败，共 {len(ids)} 个种子")
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage,
-                        title="【种子保活任务执行失败】",
-                        text=f"下载器 {service.name} 保活失败，共 {len(ids)} 个种子"
-                        )
+                message_text += f"下载器 {service.name} 保活失败，共 {len(ids)} 个种子"
 
         self._keep_alive_torrents = {}
+        if self._notify:
+            self.post_message(
+                mtype=NotificationType.SiteMessage,
+                title="【种子保活任务执行完成】",
+                text=message_text)
 
     def stop_service(self):
         """
