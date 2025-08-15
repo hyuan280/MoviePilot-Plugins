@@ -83,19 +83,6 @@
       "v1.0.0": "定时检查做种状态，重新开始未做种的种子"
     }
   },
-  "FlareSolverr" : {
-    "name": "FlareSolverr代理",
-    "description": "给系统增加FlareSolverr代理，可以使用FlareSolverr代理绕过CF",
-    "labels": "代理",
-    "version": "1.0.1",
-    "icon": "https://lsky.hy2zy.fun/uploads/1/2025-07-22/FlareSolverr.png",
-    "author": "hyuan280",
-    "level": 2,
-    "history": {
-      "v1.0.1": "修复超时时间不是数字的问题",
-      "v1.0.0": "给系统增加FlareSolverr代理，可以使用FlareSolverr代理绕过CF"
-    }
-  },
   "AutoClaim" : {
     "name": "自动认领种子",
     "description": "定时认领做种的种子",
