@@ -23,7 +23,7 @@ class TorrentKeepAlive(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.4"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -290,27 +290,19 @@ class TorrentKeepAlive(_PluginBase):
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
             self._scheduler.start()
 
-        # 设置最少5秒，应该够把所有下载器种子检查完
-        if seconds < 5:
-            seconds = 5
+        # 延时区间20-120秒
+        if seconds < 20:
+            seconds = 20
+        elif seconds > 120:
+            seconds = 120
+
+        logger.info(f"在 {seconds} 秒后重新开始种子")
 
         tz = pytz.timezone(settings.TZ)
         new_run_time = datetime.now(tz=tz) + timedelta(seconds=seconds)
         existing_job = self._scheduler.get_job("restart_torrent")
         if existing_job:
-            try:
-                old_run_time = existing_job.next_run_time  # 尝试新版本属性
-            except AttributeError:
-                old_run_time = existing_job.next_run_time()  # 回退到旧版本方法
-
-            if old_run_time.tzinfo is None:
-                old_run_time = pytz.utc.localize(old_run_time)
-            old_run_time = old_run_time.astimezone(tz)
-
-            if new_run_time > old_run_time:
-                existing_job.remove()
-            else:
-                return
+            existing_job.remove()
 
         self._scheduler.add_job(self.restart_torrent, 'date', id="restart_torrent",
                                 run_date=new_run_time)
@@ -322,6 +314,7 @@ class TorrentKeepAlive(_PluginBase):
         开始种子保活
         """
         logger.info("开始种子保活任务 ...")
+        restart_delay_s = 20
 
         if not self.__validate_config():
             return
@@ -335,7 +328,6 @@ class TorrentKeepAlive(_PluginBase):
             keep_alive_torrents = self._keep_alive_torrents.get(service.name)
             if keep_alive_torrents:
                 logger.info(f"下载器 {service.name} 还有种子{len(keep_alive_torrents)}个等待重新开始，下一次任务再检查")
-                self.__scheduler_restart_torrent(len(keep_alive_torrents))
                 continue
 
             keep_alive_torrents = []
@@ -367,9 +359,9 @@ class TorrentKeepAlive(_PluginBase):
                         )
 
             self._keep_alive_torrents[service.name] = keep_alive_torrents
+            restart_delay_s += torrent_cnt
 
-            logger.info(f"下载器 {service.name} 在 {torrent_cnt} 秒后重新开始种子")
-            self.__scheduler_restart_torrent(torrent_cnt)
+        self.__scheduler_restart_torrent(restart_delay_s)
 
         logger.info("种子保活任务执行完成")
 
