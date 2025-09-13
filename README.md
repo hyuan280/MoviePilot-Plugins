@@ -48,7 +48,6 @@ MoviePilot官方插件市场：https://github.com/jxxghp/MoviePilot-Plugins
   - 修复硬链接：媒体库存在文件是比较文件内容，一致时使用硬链接去连接两个文件，可以继续做种并节约空间
 
 - 提示：
-  - 插件运行过程中断不了，需要重启mp
   - 监控目录如果有大量文件变动，偶尔会有相同的文件被处理导致历史记录失败，可以删除历史记录
 
 ### 二、PlayletAutoRecognize 短剧自动识别

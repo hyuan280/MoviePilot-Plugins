@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.0.1"
+    plugin_version = "3.0.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -324,9 +324,11 @@ class PlayletPolishScrape(_PluginBase):
         logger.info("开始全量整理 ...")
         # 遍历所有监控目录
         for source_dir in self._dirconf.keys():
+            if self._event.is_set():
+                return
             # 遍历目录下所有文件
             for file_path in SystemUtils.list_files(Path(source_dir), settings.RMT_MEDIAEXT):
-                if self._is_stoped:
+                if self._event.is_set() or self._is_stoped:
                     return
 
                 if self.__is_check_pass(str(file_path)):
@@ -344,7 +346,7 @@ class PlayletPolishScrape(_PluginBase):
         :param source_dir: 监控目录
         :param event_path: 事件文件路径
         """
-        if self._is_stoped:
+        if self._event.is_set() or self._is_stoped:
             return
 
         # 回收站的文件不处理
