@@ -58,9 +58,13 @@ class NexusPhpHandler(_ISiteHandler):
         try:
             logger.debug(f"站点 {site_name} 开始进行早期连接和认证检查...")
 
-            userdatas = SiteOper().get_userdata_by_domain(StringUtils.get_url_domain(site_url))
-            if userdatas:
-                userdata = userdatas[-1]
+            userdata = None
+            latest_datas = SiteOper().get_userdata_latest()
+            if latest_datas:
+                for data in latest_datas:
+                    if data and data.domain == StringUtils.get_url_domain(site_url):
+                        userdata = data
+            if userdata:
                 user_id = userdata.userid
 
             if isinstance(user_id, str) and '-' in user_id:
@@ -84,6 +88,8 @@ class NexusPhpHandler(_ISiteHandler):
                 early_check_failed = True
             else:
                 logger.debug(f"站点 {site_name} 用户ID获取成功: {user_id}")
+
+            result["invite_status"]["bonus"] = userdata.bonus
 
             # 2. Access Invite Page (invite.php) and check status/login (Only if User ID fetch didn't fail fatally)
             if not early_check_failed:
@@ -152,9 +158,9 @@ class NexusPhpHandler(_ISiteHandler):
                     bonus_url = urljoin(site_url, "mybonus.php")
                     bonus_response = session.get(bonus_url, timeout=(10, 30))
                     if bonus_response.status_code == 200:
-                        logger.debug(f"站点 {site_name} 开始获取使用魔力购买邀请...")
+                        logger.debug(f"站点 {site_name} 当前魔力值 {result["invite_status"]["bonus"]}，开始获取使用魔力购买邀请...")
                         bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
-                        result["invite_status"]["bonus"] = bonus_data["bonus"]
+                        bonus_data["bonus"] = result["invite_status"]["bonus"]
                         result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
                         result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
                         # --- Original logic to update reason based on bonus --- (kept exactly as before)
@@ -819,7 +825,6 @@ class NexusPhpHandler(_ISiteHandler):
                     # 启用状态 - 直接检查yes/no
                     elif any(keyword in header for keyword in ['启用', '狀態', 'enabled', 'status', '啟用']):
                         status_text = cell_text.lower()
-                        logger.debug(f"{invitee["username"]} => {status_text}")
                         if status_text == 'no' or '禁' in status_text or 'disabled' in status_text or 'banned' in status_text:
                             invitee["enabled"] = "No"
                             is_banned = True
@@ -1006,296 +1011,24 @@ class NexusPhpHandler(_ISiteHandler):
         :return: 魔力值和邀请价格信息
         """
         result = {
-            "bonus": 0,                  # 用户当前魔力值
             "permanent_invite_price": 0, # 永久邀请价格
             "temporary_invite_price": 0  # 临时邀请价格
         }
 
+        # 特殊站点，不方便解析
+        sp_site_price_info = {
+            "青蛙": {
+                "permanent_invite_price": 100000, # 永久邀请价格
+                "temporary_invite_price": 60000  # 临时邀请价格
+            }
+        }
+
+        if site_name in sp_site_price_info.keys():
+            return sp_site_price_info.get(site_name)
+
         try:
             # 初始化BeautifulSoup对象
             soup = BeautifulSoup(html_content, 'html.parser')
-
-            # 1. 查找当前魔力值
-            # 先尝试从特定HTML元素中提取魔力值
-            bonus_found = False
-
-            # 尝试从常见的显示位置提取魔力值
-            bonus_elements = [
-                # 类似于"用你的魔力值（当前141,725.2）换东东！"的文本
-                soup.select_one('td.text[align="center"]'),
-                # 表格中包含魔力值的单元格
-                soup.select_one('table td:contains("魔力值"), table td:contains("工分"), table td:contains("积分"), table td:contains("雨滴"), ' +
-                              'table td:contains("杏仁值"), table td:contains("UCoin"), table td:contains("麦粒"), ' +
-                              'table td:contains("银元"), table td:contains("电力值"), table td:contains("憨豆"), ' +
-                              'table td:contains("茉莉"), table td:contains("蟹币值"), table td:contains("蟹币值"), table td:contains("鲸币"), ' +
-                              'table td:contains("蝌蚪"), table td:contains("灵石"), table td:contains("爆米花"), ' +
-                              'table td:contains("冰晶"), table td:contains("魅力值"), table td:contains("猫粮"), ' +
-                              'table td:contains("星焱"), table td:contains("音浪"), table td:contains("金元宝"), table td:contains("松子"), table td:contains("松子值")'),
-                # 页面顶部通常显示用户信息的区域
-                soup.select_one('#info_block, .info, #userinfo')
-            ]
-
-            for element in bonus_elements:
-                if element:
-                    element_text = element.get_text()
-                    bonus_patterns = [
-                        # 标准魔力值格式
-                        r'魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'工分[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'用你的魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'用你的工分[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'当前([\d,\.]+)[^)]*魔力',
-                        r'当前([\d,\.]+)[^)]*工分',
-
-                        # 特殊站点魔力值格式
-                        r'杏仁值[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'UCoin[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'麦粒[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'银元[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'电力值[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'松子[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'松子值[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'憨豆[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'茉莉[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'蟹币值*[^(]*\(当前([\d,\.]+)[^)]*\)',  # 修改：同时支持蟹币和蟹币值
-                        r'鲸币[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'蝌蚪[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'灵石[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'爆米花[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'冰晶[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'积分[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'魅力值[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'猫粮[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'星焱[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'音浪[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'金元宝[^(]*\(当前([\d,\.]+)[^)]*\)',
-                        r'雨滴[^(]*\(当前([\d,\.]+)[^)]*\)',
-
-                        r'当前([\d,\.]+)[^)]*杏仁值',
-                        r'当前([\d,\.]+)[^)]*UCoin',
-                        r'当前([\d,\.]+)[^)]*麦粒',
-                        r'当前([\d,\.]+)[^)]*银元',
-                        r'当前([\d,\.]+)[^)]*电力值',
-                        r'当前([\d,\.]+)[^)]*松子',
-                        r'当前([\d,\.]+)[^)]*松子值',
-                        r'当前([\d,\.]+)[^)]*憨豆',
-                        r'当前([\d,\.]+)[^)]*茉莉',
-                        r'当前([\d,\.]+)[^)]*蟹币值',
-                        r'当前([\d,\.]+)[^)]*鲸币',
-                        r'当前([\d,\.]+)[^)]*蝌蚪',
-                        r'当前([\d,\.]+)[^)]*灵石',
-                        r'当前([\d,\.]+)[^)]*爆米花',
-                        r'当前([\d,\.]+)[^)]*冰晶',
-                        r'当前([\d,\.]+)[^)]*积分',
-                        r'当前([\d,\.]+)[^)]*魅力值',
-                        r'当前([\d,\.]+)[^)]*猫粮',
-                        r'当前([\d,\.]+)[^)]*星焱',
-                        r'当前([\d,\.]+)[^)]*音浪',
-                        r'当前([\d,\.]+)[^)]*金元宝',
-                        r'当前([\d,\.]+)[^)]*雨滴',
-
-                        r'当前([\d,\.]+)[^)]*杏仁值',
-                        r'当前([\d,\.]+)[^)]*UCoin',
-                        r'当前([\d,\.]+)[^)]*麦粒',
-                        r'当前([\d,\.]+)[^)]*银元',
-                        r'当前([\d,\.]+)[^)]*电力值',
-                        r'当前([\d,\.]+)[^)]*松子',
-                        r'当前([\d,\.]+)[^)]*松子值',
-                        r'当前([\d,\.]+)[^)]*憨豆',
-                        r'当前([\d,\.]+)[^)]*茉莉',
-                        r'当前([\d,\.]+)[^)]*蟹币值',
-                        r'当前([\d,\.]+)[^)]*鲸币',
-                        r'当前([\d,\.]+)[^)]*蝌蚪',
-                        r'当前([\d,\.]+)[^)]*灵石',
-                        r'当前([\d,\.]+)[^)]*爆米花',
-                        r'当前([\d,\.]+)[^)]*冰晶',
-                        r'当前([\d,\.]+)[^)]*魅力值',
-                        r'当前([\d,\.]+)[^)]*猫粮',
-                        r'当前([\d,\.]+)[^)]*星焱',
-                        r'当前([\d,\.]+)[^)]*音浪',
-                        r'当前([\d,\.]+)[^)]*金元宝',
-                        r'当前([\d,\.]+)[^)]*雨滴',
-
-                        r'([\d,\.]+)\s*个杏仁值',
-                        r'([\d,\.]+)\s*个UCoin',
-                        r'([\d,\.]+)\s*个麦粒',
-                        r'([\d,\.]+)\s*个银元',
-                        r'([\d,\.]+)\s*个电力值',
-                        r'([\d,\.]+)\s*个松子',
-                        r'([\d,\.]+)\s*个松子值',
-                        r'([\d,\.]+)\s*个憨豆',
-                        r'([\d,\.]+)\s*个茉莉',
-                        r'([\d,\.]+)\s*个蟹币值',
-                        r'([\d,\.]+)\s*个鲸币',
-                        r'([\d,\.]+)\s*个蝌蚪',
-                        r'([\d,\.]+)\s*个灵石',
-                        r'([\d,\.]+)\s*个爆米花',
-                        r'([\d,\.]+)\s*个冰晶',
-                        r'([\d,\.]+)\s*个魅力值',
-                        r'([\d,\.]+)\s*个猫粮',
-                        r'([\d,\.]+)\s*个星焱',
-                        r'([\d,\.]+)\s*个音浪',
-                        r'([\d,\.]+)\s*个金元宝',
-                        r'([\d,\.]+)\s*个雨滴'
-                    ]
-
-                    for pattern in bonus_patterns:
-                        bonus_match = re.search(pattern, element_text, re.IGNORECASE)
-                        if bonus_match:
-                            bonus_str = bonus_match.group(1).replace(',', '')
-                            try:
-                                result["bonus"] = float(bonus_str)
-                                logger.debug(f"站点 {site_name} 从元素中提取到魔力值/特殊积分: {result['bonus']}")
-
-                                # 检查魔力值是否可能是时魔信息
-                                if result["bonus"] < 100 and '时魔' in element_text or '每小时' in element_text:
-                                    logger.warning(f"站点 {site_name} 提取的可能是时魔信息而非魔力值: {result['bonus']}")
-                                    result["bonus"] = 0
-                                    bonus_found = False
-                                    continue
-
-                                bonus_found = True
-                                break
-                            except ValueError:
-                                continue
-
-                if bonus_found:
-                    break
-
-            # 如果从元素中没找到魔力值，则从整个页面文本中提取
-            if not bonus_found:
-                # 查找包含魔力值的文本，添加更多可能的格式匹配模式
-                bonus_patterns = [
-                    # 常规魔力值格式
-                    r'魔力值\s*[:：]\s*([\d,\.]+)',
-                    r'当前魔力值[^(]*\(当前([\d,\.]+)\)',
-                    r'当前([\d,\.]+)[^)]*魔力值',
-                    r'魔力值[^(]*\(当前([\d,\.]+)\)',
-                    r'用你的魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
-
-                    # 工分格式
-                    r'工分\s*[:：]\s*([\d,\.]+)',
-                    r'当前工分[^(]*\(当前([\d,\.]+)\)',
-                    r'当前([\d,\.]+)[^)]*工分',
-                    r'工分[^(]*\(当前([\d,\.]+)\)',
-                    r'用你的工分[^(]*\(当前([\d,\.]+)[^)]*\)',
-
-                    # 积分/欢乐值等其他变体
-                    r'积分\s*[:：]\s*([\d,\.]+)',
-                    r'欢乐值\s*[:：]\s*([\d,\.]+)',
-                    r'當前\s*[:：]?\s*([\d,\.]+)',
-                    r'目前\s*[:：]?\s*([\d,\.]+)',
-                    r'bonus\s*[:：]?\s*([\d,\.]+)',
-                    r'([\d,\.]+)\s*个魔力值',
-                    r'([\d,\.]+)\s*个工分',
-
-                    # 特殊站点魔力值格式
-                    r'杏仁值\s*[:：]\s*([\d,\.]+)',
-                    r'UCoin\s*[:：]\s*([\d,\.]+)',
-                    r'麦粒\s*[:：]\s*([\d,\.]+)',
-                    r'银元\s*[:：]\s*([\d,\.]+)',
-                    r'电力值\s*[:：]\s*([\d,\.]+)',
-                    r'松子\s*[:：]\s*([\d,\.]+)',
-                    r'松子值\s*[:：]\s*([\d,\.]+)',
-                    r'憨豆\s*[:：]\s*([\d,\.]+)',
-                    r'茉莉\s*[:：]\s*([\d,\.]+)',
-                    r'蟹币值*\s*[:：]\s*([\d,\.]+)',  # 修改：同时支持蟹币和蟹币值
-                    r'鲸币\s*[:：]\s*([\d,\.]+)',
-                    r'蝌蚪\s*[:：]\s*([\d,\.]+)',
-                    r'灵石\s*[:：]\s*([\d,\.]+)',
-                    r'爆米花\s*[:：]\s*([\d,\.]+)',
-                    r'冰晶\s*[:：]\s*([\d,\.]+)',
-                    r'魅力值\s*[:：]\s*([\d,\.]+)',
-                    r'猫粮\s*[:：]\s*([\d,\.]+)',
-                    r'星焱\s*[:：]\s*([\d,\.]+)',
-                    r'雨滴\s*[:：]\s*([\d,\.]+)',
-
-                    r'当前杏仁值[^(]*\(当前([\d,\.]+)\)',
-                    r'当前UCoin[^(]*\(当前([\d,\.]+)\)',
-                    r'当前麦粒[^(]*\(当前([\d,\.]+)\)',
-                    r'当前银元[^(]*\(当前([\d,\.]+)\)',
-                    r'当前电力值[^(]*\(当前([\d,\.]+)\)',
-                    r'当前松子[^(]*\(当前([\d,\.]+)\)',
-                    r'当前松子值[^(]*\(当前([\d,\.]+)\)',
-                    r'当前憨豆[^(]*\(当前([\d,\.]+)\)',
-                    r'当前茉莉[^(]*\(当前([\d,\.]+)\)',
-                    r'当前蟹币值[^(]*\(当前([\d,\.]+)\)',
-                    r'当前鲸币[^(]*\(当前([\d,\.]+)\)',
-                    r'当前蝌蚪[^(]*\(当前([\d,\.]+)\)',
-                    r'当前灵石[^(]*\(当前([\d,\.]+)\)',
-                    r'当前爆米花[^(]*\(当前([\d,\.]+)\)',
-                    r'当前冰晶[^(]*\(当前([\d,\.]+)\)',
-                    r'当前魅力值[^(]*\(当前([\d,\.]+)\)',
-                    r'当前猫粮[^(]*\(当前([\d,\.]+)\)',
-                    r'当前星焱[^(]*\(当前([\d,\.]+)\)',
-                    r'当前雨滴[^(]*\(当前([\d,\.]+)\)',
-
-                    r'当前([\d,\.]+)[^)]*杏仁值',
-                    r'当前([\d,\.]+)[^)]*UCoin',
-                    r'当前([\d,\.]+)[^)]*麦粒',
-                    r'当前([\d,\.]+)[^)]*银元',
-                    r'当前([\d,\.]+)[^)]*电力值',
-                    r'当前([\d,\.]+)[^)]*电力值',
-                    r'当前([\d,\.]+)[^)]*电力值',
-                    r'当前([\d,\.]+)[^)]*憨豆',
-                    r'当前([\d,\.]+)[^)]*茉莉',
-                    r'当前([\d,\.]+)[^)]*蟹币值',
-                    r'当前([\d,\.]+)[^)]*鲸币',
-                    r'当前([\d,\.]+)[^)]*蝌蚪',
-                    r'当前([\d,\.]+)[^)]*灵石',
-                    r'当前([\d,\.]+)[^)]*爆米花',
-                    r'当前([\d,\.]+)[^)]*冰晶',
-                    r'当前([\d,\.]+)[^)]*魅力值',
-                    r'当前([\d,\.]+)[^)]*猫粮',
-                    r'当前([\d,\.]+)[^)]*星焱',
-                    r'当前([\d,\.]+)[^)]*音浪',
-                    r'当前([\d,\.]+)[^)]*金元宝',
-                    r'当前([\d,\.]+)[^)]*雨滴',
-
-                    r'([\d,\.]+)\s*个杏仁值',
-                    r'([\d,\.]+)\s*个UCoin',
-                    r'([\d,\.]+)\s*个麦粒',
-                    r'([\d,\.]+)\s*个银元',
-                    r'([\d,\.]+)\s*个电力值',
-                    r'([\d,\.]+)\s*个松子',
-                    r'([\d,\.]+)\s*个松子值',
-                    r'([\d,\.]+)\s*个憨豆',
-                    r'([\d,\.]+)\s*个茉莉',
-                    r'([\d,\.]+)\s*个蟹币值',
-                    r'([\d,\.]+)\s*个鲸币',
-                    r'([\d,\.]+)\s*个蝌蚪',
-                    r'([\d,\.]+)\s*个灵石',
-                    r'([\d,\.]+)\s*个爆米花',
-                    r'([\d,\.]+)\s*个冰晶',
-                    r'([\d,\.]+)\s*个魅力值',
-                    r'([\d,\.]+)\s*个猫粮',
-                    r'([\d,\.]+)\s*个星焱',
-                    r'([\d,\.]+)\s*个音浪',
-                    r'([\d,\.]+)\s*个金元宝',
-                    r'([\d,\.]+)\s*个雨滴'
-                ]
-
-                # 页面文本
-                page_text = soup.get_text()
-
-                # 尝试不同的正则表达式查找魔力值
-                for pattern in bonus_patterns:
-                    bonus_match = re.search(pattern, page_text, re.IGNORECASE)
-                    if bonus_match:
-                        bonus_str = bonus_match.group(1).replace(',', '')
-                        try:
-                            result["bonus"] = float(bonus_str)
-                            logger.debug(f"站点 {site_name} 从页面文本中提取到魔力值/特殊积分: {result['bonus']}")
-
-                            # 检查是否在时魔相关上下文中
-                            context_text = page_text[max(0, page_text.find(bonus_str) - 50):page_text.find(bonus_str) + 50]
-                            if result["bonus"] < 100 and ('时魔' in context_text or '每小时' in context_text):
-                                logger.warning(f"站点 {site_name} 页面文本中提取的可能是时魔信息而非魔力值: {result['bonus']}")
-                                continue
-
-                            break
-                        except ValueError:
-                            continue
 
             # 2. 查找邀请价格
             # 查找表格
@@ -1305,7 +1038,7 @@ class NexusPhpHandler(_ISiteHandler):
                 headers = table.select('td.colhead, th.colhead, td, th')
                 header_text = ' '.join([h.get_text().lower() for h in headers])
 
-                bonus_keywords = ['魔力值', '积分', 'bonus', '工分', '杏仁值', 'ucoin', '麦粒', '银元', '雨滴',
+                bonus_keywords = ['用你的', '魔力值', '积分', 'bonus', '工分', '杏仁值', 'ucoin', '麦粒', '银元', '雨滴',
                                  '电力值','松子','松子值', '憨豆', '茉莉', '蟹币', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花',
                                  '冰晶', '魅力值', '猫粮', '星焱', '音浪', '金元宝']
 

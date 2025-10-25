@@ -52,9 +52,13 @@ class HHClubHandler(_ISiteHandler):
         
         try:
             # 获取用户ID
-            userdatas = SiteOper().get_userdata_by_domain(StringUtils.get_url_domain(site_url))
-            if userdatas:
-                userdata = userdatas[-1]
+            userdata = None
+            latest_datas = SiteOper().get_userdata_latest()
+            if latest_datas:
+                for data in latest_datas:
+                    if data and data.domain == StringUtils.get_url_domain(site_url):
+                        userdata = data
+            if userdata:
                 user_id = userdata.userid
 
             if not user_id:

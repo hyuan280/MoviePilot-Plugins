@@ -127,6 +127,9 @@ class MTeamHandler(_ISiteHandler):
 
             # 更新邀请状态
             result["invite_status"].update({
+                "bonus": user_bonus,
+                "permanent_invite_price": 80000,
+                "temporary_invite_price": 0,
                 "permanent_count": permanent_invites,
                 "temporary_count": temporary_invites,
                 "can_invite": has_invite_permission and (permanent_invites > 0 or temporary_invites > 0 or buyable_invites > 0)

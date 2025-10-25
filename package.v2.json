@@ -102,11 +102,12 @@
     "name": "邀请管理系统",
     "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
     "labels": "站点, 邀请",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "icon": "",
     "author": "hyuan280,madrays",
     "level": 2,
     "history": {
+      "v1.0.3": "使用mp用户数据的魔力值，删除mteam显示的差异化",
       "v1.0.2": "nexusphp兼容uuid格式的站点",
       "v1.0.0": "移植madrays后宫管理，处理部分失败的站点"
     }

@@ -48,8 +48,6 @@ class Prescription():
         self._tag(site_name,"cbt",value)
     def setCanInvite(self,site_name,value):
         self._tag(site_name,"can_invite",value)
-    def setMTBuyable(self,site_name,value):
-        self._tag(site_name,"mt_buyable",value)
 
     def _export(self):
         med_list = []
@@ -63,8 +61,6 @@ class Prescription():
             site_can_buy = 0
             if 'cbp' in self._cache[k]:
                 site_can_buy += self._cache[k].get("cbt", 0) or self._cache[k].get("cbp", 0)
-            if 'mt_buyable' in self._cache[k]:
-                site_can_buy += self._cache[k].get("mt_buyable", 0)
 
             if (site_remain + site_can_buy > 0 and
                 self._cache[k].get('can_invite', False)):
@@ -345,7 +341,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -2090,16 +2086,13 @@ class InviteManage(_PluginBase):
                     if not can_invite:
                         logger.debug(f"站点 {site_name} 不可邀请原因: {reason}")
 
-                    # 检查是否为M-Team站点
-                    is_mteam_site = site_info.get("schema", "") == SiteSchema.MTorrent.value
-
                     # 获取站点魔力值和邀请价格信息
                     bonus = invite_status.get("bonus", 0)
                     permanent_invite_price = invite_status.get("permanent_invite_price", 0)
                     temporary_invite_price = invite_status.get("temporary_invite_price", 0)
 
                     # 添加不可邀请原因的显示
-                    if not can_invite and reason and not is_mteam_site:  # 对于M-Team站点，我们会在后面特殊处理
+                    if not can_invite and reason:
                         site_card["content"].append({
                             "component": "VCardText",
                             "props": {
@@ -2132,244 +2125,8 @@ class InviteManage(_PluginBase):
                             ]
                         })
 
-                    # M-Team站点特殊处理
-                    if is_mteam_site:
-                        # 尝试从reason中提取用户等级和魔力值信息
-                        import re
-
-
-                        # 提取用户等级
-                        user_role = ""
-                        level_match = re.search(r'用户等级\(([^)]+)\)', reason)
-                        if level_match:
-                            user_role = level_match.group(1)
-
-
-                        # 提取魔力值
-                        user_bonus = ""
-                        bonus_match = re.search(r'魔力值\(([0-9.]+)\)', reason)
-                        if bonus_match:
-                            user_bonus = bonus_match.group(1)
-                        # 提取可购买邀请数
-                        buyable_invites = 0
-                        buy_match = re.search(r'可购买(\d+)个', reason)
-                        if buy_match:
-                            buyable_invites = int(buy_match.group(1))
-                        # 计算MT可买药数量
-                        mt_buyable = 0
-                        if user_bonus and user_role:
-                            try:
-                                user_bonus_float = float(user_bonus)
-                                # 每80000魔力可买一个
-                                mt_buyable = int(user_bonus_float / 80000)
-                                # 向药单打标MT可买药数量
-                                self.presc.setMTBuyable(site_name, mt_buyable)
-                            except (ValueError, TypeError):
-                                user_bonus_float = 0
-                        # 如果魔力值和用户等级有效
-                        if user_bonus and user_role:
-                            # 计算还需多少魔力
-                            try:
-                                user_bonus_float = float(user_bonus)
-                                needed_bonus = 80000 - (user_bonus_float % 80000)
-                                needed_bonus_text = f"(还需{needed_bonus:.1f}魔力)" if mt_buyable == 0 and user_bonus_float > 0 else ""
-                            except (ValueError, TypeError):
-                                user_bonus_float = 0
-
-                            # 添加用户等级卡片
-                            site_card["content"].append({
-                                "component": "VCardText",
-                                "props": {
-                                    "class": "py-0"
-                                },
-                                "content": [
-                                    {
-                                        "component": "VRow",
-                                        "props": {
-                                            "dense": True
-                                        },
-                                        "content": [
-                                            # 用户等级
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 3},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "d-flex align-center py-2"
-                                                    },
-                                                    "content": [
-                                                        {
-                                                            "component": "VIcon",
-                                                            "props": {
-                                                                "color": "deep-purple",
-                                                                "size": "small",
-                                                                "class": "mr-2"
-                                                            },
-                                                            "text": "mdi-crown"
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "content": [
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-subtitle-2 font-weight-medium"},
-                                                                    "text": user_role
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
-                                                                    "text": "用户等级"
-                                                                }
-                                                            ]
-                                                        }
-                                                    ]
-                                                }]
-                                            },
-                                            # 魔力值
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 3},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "d-flex align-center py-2"
-                                                    },
-                                                    "content": [
-                                                        {
-                                                            "component": "VIcon",
-                                                            "props": {
-                                                                "color": "orange",
-                                                                "size": "small",
-                                                                "class": "mr-2"
-                                                            },
-                                                            "text": "mdi-diamond"
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "content": [
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-subtitle-2 font-weight-medium"},
-                                                                    "text": user_bonus
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
-                                                                    "text": "魔力值"
-                                                                }
-                                                            ]
-                                                        }
-                                                    ]
-                                                }]
-                                            },
-                                            # 可购买邀请
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 6},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "d-flex align-center py-2"
-                                                    },
-                                                    "content": [
-                                                        {
-                                                            "component": "VIcon",
-                                                            "props": {
-                                                                "color": "cyan",
-                                                                "size": "small",
-                                                                "class": "mr-2"
-                                                            },
-                                                            "text": "mdi-cart"
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "content": [
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-subtitle-2 font-weight-medium"},
-                                                                    "text": str(buyable_invites) + " " + needed_bonus_text
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
-                                                                    "text": "可购买邀请"
-                                                                }
-                                                            ]
-                                                        }
-                                                    ]
-                                                }]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            })
-
-                            # 添加提示信息
-                            site_card["content"].append({
-                                "component": "VCardText",
-                                "props": {
-                                    "class": "py-1"
-                                },
-                                "content": [
-                                    {
-                                        "component": "VAlert",
-                                        "props": {
-                                            "type": "info",
-                                            "variant": "tonal",
-                                            "density": "compact",
-                                            "class": "my-1 d-flex align-center"
-                                        },
-                                        "content": [
-                                            {
-                                                "component": "VIcon",
-                                                "props": {
-                                                    "start": True,
-                                                    "size": "small"
-                                                },
-                                                "text": "mdi-information"
-                                            },
-                                            {
-                                                "component": "span",
-                                                "props": {"class": "flex-grow-1"},
-                                                "text": "M-Team每80000魔力可购买一个临时邀请"
-                                            },
-                                            {
-                                                "component": "VBtn",
-                                                "props": {
-                                                    "variant": "text",
-                                                    "density": "compact",
-                                                    "color": "primary",
-                                                    "href": site_info.get('url') + "mybonus",
-                                                    "target": "_blank",
-                                                    "size": "small"
-                                                },
-                                                "content": [
-                                                    {
-                                                        "component": "VIcon",
-                                                        "props": {
-                                                            "start": True,
-                                                            "size": "small"
-                                                        },
-                                                        "text": "mdi-store"
-                                                    },
-                                                    {
-                                                        "component": "span",
-                                                        "text": "前往商店购买"
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            })
-
-                            # M-Team特殊显示时跳过原来的警告提示
-                            error_message = ""
-                            reason = ""
-
                     # 通用站点处理
-                    elif bonus > 0 and (permanent_invite_price > 0 or temporary_invite_price > 0):
+                    if bonus > 0 and (permanent_invite_price > 0 or temporary_invite_price > 0):
 
                         # 计算可购买邀请数量
                         can_buy_permanent = 0
@@ -3183,6 +2940,21 @@ class InviteManage(_PluginBase):
             site_id = site_info.get("id", "")
             site_schema = site_info.get("schema", "")
 
+            # 查找匹配的处理器
+            handler = ModuleLoader.get_handler_for_site(site_schema, self._site_handlers)
+            if not handler:
+                # 还没有适配的站点
+                logger.info(f"站点 {site_name} 暂时不支持获取邀请信息")
+                return {
+                    "error": "站点暂时不支持获取邀请",
+                    "invite_status": {
+                        "can_invite": False,
+                        "permanent_count": 0,
+                        "temporary_count": 0,
+                        "reason": "暂时不支持"
+                    }
+                }
+
             # 检查是否是M-Team站点
             is_mteam = site_schema == SiteSchema.MTorrent.value
 
@@ -3190,7 +2962,6 @@ class InviteManage(_PluginBase):
             if is_mteam:
                 try:
                     api_key = site_info.get("apikey", "").strip()
-                    logger.debug(f"api_key={api_key}")
                 except Exception as e:
 
                     logger.debug(f"{e}")
@@ -3308,31 +3079,8 @@ class InviteManage(_PluginBase):
                         }
                     }
 
-            # 使用站点处理器
-            logger.info(f"站点 {site_name} 开始处理邀请数据")
-
-            # 根据站点类型选择不同的处理器
-            if is_mteam:
-                logger.info(f"站点 {site_name} 使用M-Team处理器")
-                from plugins.invitemanage.sites.mteam import MTeamHandler
-                handler = MTeamHandler()
-            else:
-                # 查找匹配的处理器
-                handler = ModuleLoader.get_handler_for_site(site_schema, self._site_handlers)
-                if not handler:
-                    # 还没有适配的站点
-                    logger.info(f"站点 {site_name} 暂时不支持获取邀请信息")
-                    return {
-                        "error": "站点暂时不支持获取邀请",
-                        "invite_status": {
-                            "can_invite": False,
-                            "permanent_count": 0,
-                            "temporary_count": 0,
-                            "reason": "暂时不支持"
-                        }
-                    }
-
             # 使用处理器解析邀请页面
+            logger.info(f"站点 {site_name} 开始处理邀请数据")
             site_data = handler.parse_invite_page(site_info, session)
 
             # 检查站点数据结构是否正确
