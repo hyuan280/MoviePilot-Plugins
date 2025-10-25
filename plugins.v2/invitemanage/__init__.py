@@ -345,7 +345,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.2"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -444,7 +444,7 @@ class InviteManage(_PluginBase):
             if not self._manage_sites:
                 logger.info("未选择任何站点，将使用所有站点")
             else:
-                logger.info(f"后宫管理系统初始化完成，已选择 {len(self._manage_sites)} 个站点")
+                logger.info(f"邀请管理系统初始化完成，已选择 {len(self._manage_sites)} 个站点")
 
         # 立即运行一次
         if self._onlyonce:
@@ -454,7 +454,7 @@ class InviteManage(_PluginBase):
                 logger.debug("立即运行一次开关已开启，将在3秒后执行刷新")
                 self._scheduler.add_job(func=self.refresh_all_sites, trigger='date',
                                       run_date=datetime.now(pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                      name="后宫管理系统")
+                                      name="邀请管理系统")
 
                 # 关闭一次性开关
                 self._onlyonce = False
@@ -477,7 +477,7 @@ class InviteManage(_PluginBase):
             import importlib
 
             # 记录开始重载
-            logger.debug("后宫管理系统开始动态重载模块...")
+            logger.debug("邀请管理系统开始动态重载模块...")
 
             # 1. 清理模块缓存 - 从sys.modules中删除相关模块
             modules_to_reload = []
@@ -506,7 +506,7 @@ class InviteManage(_PluginBase):
                 logger.error(f"更新核心模块引用失败: {str(e)}")
 
             # 记录完成信息
-            logger.info(f"后宫管理系统成功重载 {len(modules_to_reload)} 个模块")
+            logger.info(f"邀请管理系统成功重载 {len(modules_to_reload)} 个模块")
         except Exception as e:
             logger.error(f"动态重载模块失败: {str(e)}")
             import traceback
@@ -548,13 +548,13 @@ class InviteManage(_PluginBase):
             "endpoint": self.get_config,
             "methods": ["GET"],
             "summary": "获取配置",
-            "description": "获取后宫管理系统配置数据",
+            "description": "获取邀请管理系统配置数据",
         }, {
             "path": "/update_config",
             "endpoint": self.update_config,
             "methods": ["POST"],
             "summary": "更新配置",
-            "description": "更新后宫管理系统配置数据",
+            "description": "更新邀请管理系统配置数据",
         }, {
             "path": "/get_invitees",
             "endpoint": self.get_invitees,
@@ -575,7 +575,7 @@ class InviteManage(_PluginBase):
         """
         return [{
             "key": "invitemanage_dashboard",
-            "name": "后宫管理系统"
+            "name": "邀请管理系统"
         }]
 
     def get_dashboard(self, key: str, **kwargs) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], List[dict]]]:
@@ -648,6 +648,7 @@ class InviteManage(_PluginBase):
                 total_perm_invites += invite_status.get("permanent_count", 0)
                 total_temp_invites += invite_status.get("temporary_count", 0)
 
+
                 # 统计用户状态 - 使用ratio_health字段
                 banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
                 low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') in ['warning', 'danger'])
@@ -668,7 +669,7 @@ class InviteManage(_PluginBase):
             # 全局配置
             global_config = {
                 "refresh": 3600,  # 1小时自动刷新一次
-                "title": "后宫总览",
+                "title": "邀请总览",
                 "subtitle": f"更新时间: {last_update}",
                 "border": False
             }
@@ -686,7 +687,7 @@ class InviteManage(_PluginBase):
                 "content": [
                     {
                         "component": "VCardTitle",
-                        "text": "后宫总览"
+                        "text": "邀请总览"
                     },
                     {
                         "component": "VCardText",
@@ -751,7 +752,7 @@ class InviteManage(_PluginBase):
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
-                                                    "text": "后宫成员"
+                                                    "text": "邀请成员"
                                                 }
                                             ]
                                         }]
@@ -938,7 +939,7 @@ class InviteManage(_PluginBase):
                 "md": 6
             }, {
                 "refresh": 3600,
-                "title": "后宫管理系统",
+                "title": "邀请管理系统",
                 "subtitle": "发生错误"
             }, [{
                 "component": "VAlert",
@@ -1194,7 +1195,7 @@ class InviteManage(_PluginBase):
                                 {
                                     "type": "div",
                                     "class": "dashboard-stats__title",
-                                    "content": "后宫成员"
+                                    "content": "邀请成员"
                                 },
                                 {
                                     "type": "div",
@@ -1333,7 +1334,7 @@ class InviteManage(_PluginBase):
                 "component": "VAlert",
                 "props": {
                     "type": "info",
-                    "text": f"后宫管理系统 - 共 {len(cached_data)} 个站点，数据最后更新时间: {last_update}\n注: 本插件不会自动刷新数据，只显示在MP中已配置并选择的站点",
+                    "text": f"邀请管理系统 - 共 {len(cached_data)} 个站点，数据最后更新时间: {last_update}\n注: 本插件不会自动刷新数据，只显示在MP中已配置并选择的站点",
                     "variant": "tonal",
                     "class": "mb-4"
                 }
@@ -1471,7 +1472,7 @@ class InviteManage(_PluginBase):
                 "content": [
                     {
                         "component": "VCardTitle",
-                        "text": "后宫总览"
+                        "text": "邀请总览"
                     },
                     {
                         "component": "VCardText",
@@ -1536,7 +1537,7 @@ class InviteManage(_PluginBase):
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
-                                                    "text": "后宫成员"
+                                                    "text": "邀请成员"
                                                 }
                                             ]
                                         }]
@@ -2687,7 +2688,7 @@ class InviteManage(_PluginBase):
                                             "class": ("text-success" if invitee.get('status') == '已确认' else "") +
                                                      (" text-error font-weight-bold" if invitee.get('enabled', '').lower() == 'no' else "")
                                         },
-                                        "text": invitee.get("status", "") + (" (已禁用)" if invitee.get('enabled', '').lower() == 'no' else "")
+                                        "text": invitee.get("status", "") or (" 已禁用" if invitee.get('enabled', '').lower() == 'no' else "")
                                     }
                                 ]
                             })
@@ -2725,7 +2726,7 @@ class InviteManage(_PluginBase):
                                                         },
                                                         {
                                                             "component": "span",
-                                                            "text": f"后宫成员列表 ({len(invitees)}人)"
+                                                            "text": f"邀请成员列表 ({len(invitees)}人)"
                                                         },
                                                         {
                                                             "component": "VSpacer"
@@ -3124,7 +3125,7 @@ class InviteManage(_PluginBase):
                         "class": "mt-4"
                     }
                 })
-            # 删除这行，因为我们已经在后宫总览下方添加了药单
+            # 删除这行，因为我们已经在邀请总览下方添加了药单
             # page_content.insert(0,self.presc.getComponent())
             return page_content
 
@@ -3148,9 +3149,9 @@ class InviteManage(_PluginBase):
                 if self._scheduler.running:
                     self._scheduler.shutdown()
                 self._scheduler = None
-                logger.info("后宫管理系统服务已停止")
+                logger.info("邀请管理系统服务已停止")
         except Exception as e:
-            logger.error(f"停止后宫管理系统服务失败: {str(e)}")
+            logger.error(f"停止邀请管理系统服务失败: {str(e)}")
 
     def _get_site_invite_data(self, site_name):
         """
@@ -3363,7 +3364,7 @@ class InviteManage(_PluginBase):
 
     def get_invitees(self, apikey: str = None, site_name: str = None) -> dict:
         """
-        获取后宫成员API接口
+        获取邀请成员API接口
         """
         if apikey and apikey != settings.API_TOKEN:
             return {"code": 1, "message": "API令牌错误!"}
@@ -3390,8 +3391,8 @@ class InviteManage(_PluginBase):
             }
             }
         except Exception as e:
-            logger.error(f"获取后宫成员失败: {str(e)}")
-            return {"code": 1, "message": f"获取后宫成员失败: {str(e)}"}
+            logger.error(f"获取邀请成员失败: {str(e)}")
+            return {"code": 1, "message": f"获取邀请成员失败: {str(e)}"}
 
     def refresh_data(self, apikey: str = None) -> dict:
         """
@@ -3437,7 +3438,7 @@ class InviteManage(_PluginBase):
         try:
             # 设置刷新标志防止重复刷新
             if hasattr(self, '_refreshing') and self._refreshing:
-                logger.warning("后宫管理系统数据刷新已在进行中，跳过重复刷新")
+                logger.warning("邀请管理系统数据刷新已在进行中，跳过重复刷新")
                 return {"success": 0, "error": 0, "message": "刷新已在进行中"}
 
             self._refreshing = True
@@ -3491,7 +3492,7 @@ class InviteManage(_PluginBase):
             for site in selected_sites:
                 site_name = site.get("name", "")
 
-                logger.debug(f"开始获取站点 {site_name} 的后宫数据...")
+                logger.debug(f"开始获取站点 {site_name} 的邀请数据...")
 
                 site_data = self._get_site_invite_data(site_name)
 
@@ -3628,7 +3629,7 @@ class InviteManage(_PluginBase):
 
                 logger.info(f"站点 {site_name} 统计结果: 总人数={len(invitees)}, 低分享率={low_ratio_count}, 已禁用={banned_count}, 无数据={no_data_count}")
 
-            title = "后宫管理系统 - 增量刷新结果"
+            title = "邀请管理系统 - 增量刷新结果"
             if success_count > 0 or error_count > 0:
                 # --- 修改开始: 添加图标美化通知文本 ---
                 text = f"刷新完成: ✅ 成功 {success_count} 个，❌ 失败 {error_count} 个站点\n"
@@ -3668,7 +3669,7 @@ class InviteManage(_PluginBase):
                 if str(self._cron).strip().count(" ") == 4:
                     return [{
                         "id": "invitemanage",
-                        "name": "后宫管理系统",
+                        "name": "邀请管理系统",
                         "trigger": CronTrigger.from_crontab(self._cron),
                         "func": self.refresh_all_sites,
                         "kwargs": {}
@@ -3732,7 +3733,7 @@ class InviteManage(_PluginBase):
                     logger.debug("立即运行一次开关被打开，将在3秒后执行刷新")
                     self._scheduler.add_job(func=self.refresh_all_sites, trigger='date',
                                           run_date=datetime.now(pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                          name="后宫管理系统")
+                                          name="邀请管理系统")
 
                     # 关闭一次性开关
                     self._onlyonce = False

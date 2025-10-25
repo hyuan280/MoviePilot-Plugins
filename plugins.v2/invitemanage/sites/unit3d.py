@@ -124,7 +124,7 @@ class Unit3dHandler(_ISiteHandler):
             # --- 魔力值解析结束 ---
 
             if result["invitees"]:
-                 logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个后宫成员")
+                 logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个邀请成员")
 
             return result
 

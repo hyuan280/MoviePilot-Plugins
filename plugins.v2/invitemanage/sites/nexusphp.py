@@ -63,6 +63,21 @@ class NexusPhpHandler(_ISiteHandler):
                 userdata = userdatas[-1]
                 user_id = userdata.userid
 
+            if isinstance(user_id, str) and '-' in user_id:
+                try:
+                    user_url = urljoin(site_url, f"userdetails.php?uuid={user_id}")
+                    logger.debug(f"站点 {site_name} 尝试访问用户页面: {user_url}")
+                    response = session.get(user_url, timeout=(10, 30))
+                    if response.status_code == 200:
+                        id_match = re.search(r'\?id=(\d+)', response.text)
+                        if id_match:
+                            user_id = id_match.group(1)
+
+                except Exception as e:
+                    early_failure_reason = "无法获取用户ID，请检查Cookie或站点是否可访问"
+                    logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                    early_check_failed = True
+
             if not user_id:
                 early_failure_reason = "无法获取用户ID，请检查Cookie或站点是否可访问"
                 logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
@@ -197,7 +212,7 @@ class NexusPhpHandler(_ISiteHandler):
                     while next_page < max_pages:
                         # ... (pagination logic unchanged) ...
                         next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
-                        logger.debug(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+                        logger.debug(f"站点 {site_name} 正在获取第 {next_page+1} 页邀请成员数据: {next_page_url}")
                         try:
                             next_response = session.get(next_page_url, timeout=(10, 30))
                             next_response.raise_for_status()
@@ -205,7 +220,7 @@ class NexusPhpHandler(_ISiteHandler):
 
                             # --- Repetition Check START ---
                             if not next_page_result["invitees"]:
-                                logger.debug(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                                logger.debug(f"站点 {site_name} 第 {next_page+1} 页没有邀请成员数据，停止获取")
                                 break
 
                             # Extract identifiers (e.g., profile URLs or usernames) for comparison
@@ -219,21 +234,21 @@ class NexusPhpHandler(_ISiteHandler):
 
                             # 只有在内容不重复时，才添加到结果中
                             result["invitees"].extend(next_page_result["invitees"])
-                            logger.debug(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                            logger.debug(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个邀请成员")
 
                             # Update previous page identifiers for the next iteration
                             previous_page_invitee_ids = current_page_invitee_ids
                             # --- Repetition Check END ---
 
                             if len(next_page_result["invitees"]) < 50:
-                                logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人，停止获取")
+                                logger.info(f"站点 {site_name} 第 {next_page+1} 页邀请成员数量少于50人，停止获取")
                                 break
                             next_page += 1
                         except Exception as e:
                             logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
                             break
                 else:
-                     logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
+                     logger.info(f"站点 {site_name} 首页邀请成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
 
                 # --- Original Send Invite Page Check Logic --- (kept exactly as before)
                 send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
@@ -270,7 +285,7 @@ class NexusPhpHandler(_ISiteHandler):
                     logger.warning(f"访问站点发送邀请页面失败: {str(e)}")
 
                 if result["invitees"]:
-                    logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个后宫成员")
+                    logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个邀请成员")
 
                 # --- Special Check for 猫站 (pterclub.com) START ---
                 # Check if the site is 猫站 AND we successfully got a user_id earlier
@@ -339,7 +354,7 @@ class NexusPhpHandler(_ISiteHandler):
         解析NexusPHP邀请页面HTML内容
         :param site_name: 站点名称
         :param html_content: HTML内容
-        :param is_next_page: 是否是翻页内容，如果是则只提取后宫成员数据
+        :param is_next_page: 是否是翻页内容，如果是则只提取邀请成员数据
         :return: 解析结果
         """
         result = {
@@ -758,7 +773,7 @@ class NexusPhpHandler(_ISiteHandler):
                       ['用户名', '邮箱', 'email', '分享率', 'ratio', 'username']):
                 continue
 
-            logger.debug(f"站点 {site_name} 找到后宫用户表，表头: {headers}")
+            logger.debug(f"站点 {site_name} 找到邀请用户表，表头: {headers}")
 
             # 解析表格行
             rows = table.select('tr:not(:first-child)')
@@ -798,17 +813,16 @@ class NexusPhpHandler(_ISiteHandler):
                             invitee["username"] = cell_text
 
                     # 邮箱
-                    elif any(keyword in header for keyword in ['邮箱', 'email', '电子邮件', 'mail']):
+                    elif any(keyword in header for keyword in ['邮箱', 'email', '电子邮件', 'mail', '郵箱']):
                         invitee["email"] = cell_text
 
                     # 启用状态 - 直接检查yes/no
-                    elif any(keyword in header for keyword in ['启用', '狀態', 'enabled', 'status']):
+                    elif any(keyword in header for keyword in ['启用', '狀態', 'enabled', 'status', '啟用']):
                         status_text = cell_text.lower()
+                        logger.debug(f"{invitee["username"]} => {status_text}")
                         if status_text == 'no' or '禁' in status_text or 'disabled' in status_text or 'banned' in status_text:
                             invitee["enabled"] = "No"
                             is_banned = True
-                        else:
-                            invitee["enabled"] = "Yes"
 
                     # 上传量
                     elif any(keyword in header for keyword in ['上传', '上傳', 'uploaded', 'upload']):
@@ -884,7 +898,7 @@ class NexusPhpHandler(_ISiteHandler):
                         invitee["seed_bonus"] = cell_text
 
                     # 最后做种汇报时间/最后做种报告 - 新增字段
-                    elif any(keyword in header for keyword in ['最后做种汇报', '最后做种报告', '最后做种', '最後做種報告', 'last seed report']):
+                    elif any(keyword in header for keyword in ['最后做种汇报', '最後做種匯報', '最后做种报告', '最后做种', '最後做種報告', 'last seed report']):
                         invitee["last_seed_report"] = cell_text
 
                     # 做种魔力/积分/加成
@@ -977,9 +991,9 @@ class NexusPhpHandler(_ISiteHandler):
             # 如果已找到用户数据，跳出循环
             if result["invitees"]:
                 if is_next_page:
-                    logger.debug(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个后宫成员")
+                    logger.debug(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个邀请成员")
                 else:
-                    logger.debug(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个后宫成员")
+                    logger.debug(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个邀请成员")
                 break
 
         return result
@@ -1383,7 +1397,7 @@ class NexusPhpHandler(_ISiteHandler):
                                             if is_temporary:
                                                 # --- Refined check for standard temporary invite START ---
                                                 # Check for "普通" or absence of other specific type keywords (excluding "vip")
-                                                if "普通" in row_text or ("高级" not in row_text and "特殊" not in row_text):
+                                                if "普通" in row_text or (("高级" not in row_text or "高级魔法少女" in row_text) and "特殊" not in row_text):
                                                     # Only record the price if it's explicitly "普通"
                                                     # or if other type keywords like "高级" or "特殊" are absent.
                                                     result["temporary_invite_price"] = price

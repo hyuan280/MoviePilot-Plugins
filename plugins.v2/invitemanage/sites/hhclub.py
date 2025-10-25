@@ -93,8 +93,8 @@ class HHClubHandler(_ISiteHandler):
                  result["invite_status"]["reason"] = f"检查邀请权限失败: {str(e)}"
             # --- 邀请数量和权限获取结束 ---
 
-            # --- 解析后宫列表，包含翻页和防重逻辑 ---
-            logger.info(f"站点 {site_name} 开始获取后宫列表...")
+            # --- 解析邀请列表，包含翻页和防重逻辑 ---
+            logger.info(f"站点 {site_name} 开始获取邀请列表...")
             invitee_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee")
             first_page_response = session.get(invitee_url, timeout=(10, 30))
             first_page_response.raise_for_status()
@@ -106,16 +106,16 @@ class HHClubHandler(_ISiteHandler):
             if result["invitees"]:
                 first_page_invitee_ids = {invitee.get('profile_url') or invitee.get('username') for invitee in result["invitees"]}
                 previous_page_invitee_ids = first_page_invitee_ids
-                logger.debug(f"站点 {site_name} 首页收集到 {len(previous_page_invitee_ids)} 个后宫ID用于重复检测")
+                logger.debug(f"站点 {site_name} 首页收集到 {len(previous_page_invitee_ids)} 个邀请ID用于重复检测")
 
             if len(result["invitees"]) >= 50:
-                logger.info(f"站点 {site_name} 首页后宫成员数量达到50人，尝试获取后续页面...")
+                logger.info(f"站点 {site_name} 首页邀请成员数量达到50人，尝试获取后续页面...")
                 next_page = 1
                 max_pages = 100
 
                 while next_page < max_pages:
                     next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
-                    logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+                    logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页邀请成员数据: {next_page_url}")
 
                     try:
                         next_response = session.get(next_page_url, timeout=(10, 30))
@@ -123,7 +123,7 @@ class HHClubHandler(_ISiteHandler):
                         next_page_result = self._parse_hhclub_invitee_page(site_name, site_url, next_response.text)
 
                         if not next_page_result["invitees"]:
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页没有邀请成员数据，停止获取")
                             break
 
                         current_page_invitee_ids = {invitee.get('profile_url') or invitee.get('username') for invitee in next_page_result["invitees"]}
@@ -133,12 +133,12 @@ class HHClubHandler(_ISiteHandler):
                             break
 
                         result["invitees"].extend(next_page_result["invitees"])
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个邀请成员")
 
                         previous_page_invitee_ids = current_page_invitee_ids
 
                         if len(next_page_result["invitees"]) < 50:
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，停止获取")
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页邀请成员数量少于50人({len(next_page_result['invitees'])}人)，停止获取")
                             break
 
                         next_page += 1
@@ -147,8 +147,8 @@ class HHClubHandler(_ISiteHandler):
                         logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
                         break
             else:
-                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
-            # --- 后宫列表解析结束 ---
+                logger.info(f"站点 {site_name} 首页邀请成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
+            # --- 邀请列表解析结束 ---
 
             # --- 获取魔力值和邀请价格 ---
             try:
@@ -175,7 +175,7 @@ class HHClubHandler(_ISiteHandler):
             # --- 魔力值解析结束 ---
 
             if result["invitees"]:
-                 logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个后宫成员")
+                 logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个邀请成员")
 
             return result
 
@@ -391,7 +391,7 @@ class HHClubHandler(_ISiteHandler):
     
     def _parse_hhclub_invitee_page(self, site_name: str, site_url: str, html_content: str) -> Dict[str, Any]:
         """
-        解析憨憨站点后宫成员页面HTML内容
+        解析憨憨站点邀请成员页面HTML内容
         :param site_name: 站点名称
         :param site_url: 站点URL
         :param html_content: HTML内容
@@ -407,7 +407,7 @@ class HHClubHandler(_ISiteHandler):
         # 检查是否有"没有被邀者"的提示信息
         no_invitee_div = soup.select_one('div:-soup-contains("没有被邀者")')
         if no_invitee_div:
-            logger.info(f"站点 {site_name} 没有后宫成员")
+            logger.info(f"站点 {site_name} 没有邀请成员")
             return result
 
         # === 修复开始 ===
@@ -421,7 +421,7 @@ class HHClubHandler(_ISiteHandler):
             if all_grid_rows:
                 header_row = all_grid_rows[0]
             else:
-                logger.warning(f"站点 {site_name} 未找到任何 grid-cols-* 行，无法解析后宫列表")
+                logger.warning(f"站点 {site_name} 未找到任何 grid-cols-* 行，无法解析邀请列表")
                 return result
 
         # 2. 获取父容器
@@ -638,7 +638,7 @@ class HHClubHandler(_ISiteHandler):
                 # 添加用户到结果中
                 result["invitees"].append(invitee)
 
-        logger.info(f"站点 {site_name} 解析到 {len(result['invitees'])} 个后宫成员")
+        logger.info(f"站点 {site_name} 解析到 {len(result['invitees'])} 个邀请成员")
         return result
     
     def _parse_hhclub_bonus_shop(self, site_name: str, html_content: str) -> Dict[str, Any]:
