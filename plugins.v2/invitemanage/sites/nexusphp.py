@@ -33,9 +33,12 @@ class NexusPhpHandler(_ISiteHandler):
         """
         site_name = site_info.get("name", "")
         site_url = site_info.get("url", "")
+        site_id = site_info.get("id", "")
 
         # 初始化默认结果
         result = {
+            "invite_url": site_url,
+            "shop_url": urljoin(site_url, "mybonus.php"),
             "invite_status": {
                 "can_invite": False,
                 "reason": "初始化失败", # Default reason
@@ -90,13 +93,13 @@ class NexusPhpHandler(_ISiteHandler):
                 logger.debug(f"站点 {site_name} 用户ID获取成功: {user_id}")
 
             result["invite_status"]["bonus"] = userdata.bonus
+            result["invite_url"] = urljoin(site_url, f"invite.php?id={user_id}")
 
             # 2. Access Invite Page (invite.php) and check status/login (Only if User ID fetch didn't fail fatally)
             if not early_check_failed:
-                invite_url = urljoin(site_url, f"invite.php?id={user_id}") # Use fetched user_id
-                logger.debug(f"站点 {site_name} 尝试访问邀请页面: {invite_url}")
+                logger.debug(f"站点 {site_name} 尝试访问邀请页面: {result["invite_url"]}")
                 try:
-                    response = session.get(invite_url, timeout=(10, 30))
+                    response = session.get(result["invite_url"], timeout=(10, 30))
 
                     # Check HTTP status code
                     if response.status_code >= 400:
@@ -1145,7 +1148,6 @@ class NexusPhpHandler(_ISiteHandler):
                                 except ValueError:
                                     continue
 
-            logger.debug(f"bonus_data={result}")
             return result
 
         except Exception as e:

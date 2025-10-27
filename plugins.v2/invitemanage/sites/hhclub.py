@@ -33,11 +33,13 @@ class HHClubHandler(_ISiteHandler):
         """
         site_name = site_info.get("name", "")
         site_url = site_info.get("url", "")
-        site_id = site_info.get("id")
-        
+        site_id = site_info.get("id", "")
+
         logger.info(f"开始解析站点 {site_name} 邀请页面，站点ID: {site_id}, URL: {site_url}")
-        
+
         result = {
+            "invite_url": site_url,
+            "shop_url": urljoin(site_url, "mybonus.php"),
             "invite_status": {
                 "can_invite": False,
                 "reason": "",
@@ -65,7 +67,7 @@ class HHClubHandler(_ISiteHandler):
                 logger.error(f"站点 {site_name} 无法获取用户ID")
                 result["invite_status"]["reason"] = "无法获取用户ID，请检查站点Cookie是否有效"
                 return result
-            
+            result["invite_url"] = urljoin(site_url, f"invite.php?id={user_id}")
             # --- 获取邀请数量和权限 ---
             try:
                 index_url = urljoin(site_url, "index.php")
@@ -80,8 +82,7 @@ class HHClubHandler(_ISiteHandler):
                 logger.error(f"站点 {site_name} 从主页获取邀请数量失败: {str(e)}")
 
             try:
-                invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-                response = session.get(invite_url, timeout=(10, 30))
+                response = session.get(result["invite_url"], timeout=(10, 30))
                 response.raise_for_status()
                 invite_button_info = self._check_hhclub_invite_permission(site_name, response.text)
                 result["invite_status"]["can_invite"] = invite_button_info["can_invite"]

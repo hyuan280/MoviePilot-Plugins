@@ -48,6 +48,8 @@ class Prescription():
         self._tag(site_name,"cbt",value)
     def setCanInvite(self,site_name,value):
         self._tag(site_name,"can_invite",value)
+    def setUrl(self,site_name,value):
+        self._tag(site_name,"url",value)
 
     def _export(self):
         med_list = []
@@ -56,6 +58,7 @@ class Prescription():
 
         for k in self._cache:
             site_name = k
+            site_url = self._cache[k].get("url", "")
             site_remain = self._cache[k].get('p', 0) + self._cache[k].get('t', 0)
             # 合并普通可购买和MT可购买的数量
             site_can_buy = 0
@@ -66,6 +69,7 @@ class Prescription():
                 self._cache[k].get('can_invite', False)):
                 site_content = {
                     "site": site_name,
+                    "url": site_url,
                     "remain": site_remain,
                     "can_buy": site_can_buy
                 }
@@ -288,7 +292,19 @@ class Prescription():
                                                                     "content": [
                                                                         {
                                                                             "component": "td",
-                                                                            "text": site["site"]
+                                                                            "content": [
+                                                                                {
+                                                                                    "component": "VBtn",
+                                                                                    "props": {
+                                                                                        "variant": "text",
+                                                                                        "href": site["url"],
+                                                                                        "target": "_blank",
+                                                                                        "color": "primary",
+                                                                                        "class": "text-none px-0"
+                                                                                    },
+                                                                                    "text": site["site"]
+                                                                                }
+                                                                            ]
                                                                         },
                                                                         {
                                                                             "component": "td",
@@ -341,7 +357,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.4"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -1457,7 +1473,6 @@ class InviteManage(_PluginBase):
                 self.presc.setP(site_name,invite_status.get("permanent_count", 0))
                 self.presc.setT(site_name,invite_status.get("temporary_count", 0))
 
-
             # 添加全局统计信息
             page_content.append({
                 "component": "VCard",
@@ -1713,6 +1728,8 @@ class InviteManage(_PluginBase):
                 if site_info:
                     # 获取站点数据
                     site_cache_data = cache.get("data", {})
+                    invite_url = site_cache_data.get("invite_url") or site_info.get("url")
+                    shop_url = site_cache_data.get("shop_url") or site_info.get("url")
 
                     # 尝试不同的数据结构路径获取邀请列表
                     invitees = []
@@ -2140,6 +2157,9 @@ class InviteManage(_PluginBase):
                         # 向药单打标可购买临药永药数量
                         self.presc.setCBP(site_name,can_buy_permanent)
                         self.presc.setCBT(site_name,can_buy_temporary)
+                        # 向药单打标邀请链接
+                        self.presc.setUrl(site_name, invite_url)
+
                         # 计算购买邀请后剩余魔力
                         remaining_bonus = bonus
                         if can_buy_permanent > 0 and permanent_invite_price > 0:
@@ -2336,7 +2356,7 @@ class InviteManage(_PluginBase):
                                                     "variant": "text",
                                                     "density": "compact",
                                                     "color": "primary",
-                                                    "href": site_info.get('url') + "mybonus.php",
+                                                    "href": shop_url,
                                                     "target": "_blank",
                                                     "size": "small"
                                                 },

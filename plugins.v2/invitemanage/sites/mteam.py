@@ -5,6 +5,7 @@ import time
 from typing import Dict, Any, List
 import requests
 import re
+from urllib.parse import urljoin
 
 from app.modules.indexer.parser import SiteSchema
 from app.utils.string import StringUtils
@@ -57,6 +58,8 @@ class MTeamHandler(_ISiteHandler):
         }
 
         result = {
+            "invite_url": urljoin(site_url, "invite"),
+            "shop_url": urljoin(site_url, "mybonus"),
             "invite_status": {
                 "can_invite": False,
                 "reason": "",
