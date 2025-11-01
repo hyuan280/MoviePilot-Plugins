@@ -112,5 +112,17 @@
       "v1.0.2": "nexusphp兼容uuid格式的站点",
       "v1.0.0": "移植madrays后宫管理，处理部分失败的站点"
     }
+  },
+  "MTeamScrape" : {
+    "name": "馒头资源刮削",
+    "description": "从馒头站点识别资源刮削",
+    "labels": "刮削",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png",
+    "author": "hyuan280",
+    "level": 2,
+    "history": {
+      "v1.0.0": "初步识别资源"
+    }
   }
 }
