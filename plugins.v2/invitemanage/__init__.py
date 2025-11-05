@@ -238,9 +238,9 @@ class Prescription():
                                                     "component": "VIcon",
                                                     "props": {
                                                         "start": True,
-                                                        "icon": "mdi-pill",
                                                         "color": "blue-grey"
-                                                    }
+                                                    },
+                                                    "text": "mdi-pill"
                                                 },
                                                 {
                                                     "component": "span",
@@ -357,7 +357,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.4"
+    plugin_version = "1.0.5"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -1715,6 +1715,8 @@ class InviteManage(_PluginBase):
                 ]
             })
 
+            invite_total = {}
+
             for site_name, cache in cached_data.items():
                 invite_data = cache.get("data", {})
 
@@ -1758,6 +1760,9 @@ class InviteManage(_PluginBase):
                         if result and isinstance(result, dict):
                             invite_status = result
 
+                    if invitees:
+                        invite_total[site_name] = invitees
+
                     # 计算此站点的统计信息
                     banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
                     low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') == 'warning' or i.get('ratio_health') == 'danger')
@@ -1767,61 +1772,6 @@ class InviteManage(_PluginBase):
                     total_banned += banned_count
                     total_low_ratio += low_ratio_count
                     total_no_data += no_data_count
-
-                    for invitee in invitees:
-                        # 检查是否是无数据情况（上传下载都是0）
-                        uploaded = invitee.get('uploaded', '0')
-                        downloaded = invitee.get('downloaded', '0')
-                        is_no_data = False
-
-                        # 简化判断逻辑，只关注字符串为"0"、"0.0"、"0B"或空字符串，或者数值为0的情况
-                        if isinstance(uploaded, str) and isinstance(downloaded, str):
-                            uploaded_zero = uploaded == '0' or uploaded == '' or uploaded == '0.0' or uploaded.lower() == '0b'
-                            downloaded_zero = downloaded == '0' or downloaded == '' or downloaded == '0.0' or downloaded.lower() == '0b'
-                            is_no_data = uploaded_zero and downloaded_zero
-                        elif isinstance(uploaded, (int, float)) and isinstance(downloaded, (int, float)):
-                            is_no_data = uploaded == 0 and downloaded == 0
-
-                        username = invitee.get('username', '未知')
-                        # 强制输出日志，确保无数据用户被记录
-                        if is_no_data:
-                            logger.info(f"【总览】检测到无数据用户: {username}, 上传={uploaded}, 下载={downloaded}, 当前无数据总计={total_no_data+1}")
-                            total_no_data += 1
-                            continue
-
-                        # 处理分享率
-                        ratio_str = invitee.get('ratio', '')
-                        # 处理无限分享率情况 - 增强识别能力
-                        if ratio_str == '∞' or ratio_str.lower() in ['inf.', 'inf', 'infinite', '无限']:
-                            continue  # 无限分享率不计入低分享率
-
-                        try:
-                            # 标准化字符串 - 正确处理千分位逗号
-                            # 使用更好的方法完全移除千分位逗号
-                            normalized_ratio = ratio_str
-                            # 循环处理，直到没有千分位逗号
-                            while ',' in normalized_ratio:
-                                # 检查每个逗号是否是千分位分隔符
-                                comma_positions = [pos for pos, char in enumerate(normalized_ratio) if char == ',']
-                                for pos in comma_positions:
-                                    # 如果逗号后面是数字，且前面也是数字，则视为千分位逗号
-                                    if (pos > 0 and pos < len(normalized_ratio) - 1 and
-                                        normalized_ratio[pos-1].isdigit() and normalized_ratio[pos+1].isdigit()):
-                                        normalized_ratio = normalized_ratio[:pos] + normalized_ratio[pos+1:]
-                                        break
-                                else:
-                                    # 如果没有找到千分位逗号，退出循环
-                                    break
-
-                            # 最后，将任何剩余的逗号替换为小数点（可能是小数点表示）
-                            normalized_ratio = normalized_ratio.replace(',', '.')
-                            ratio_val = float(normalized_ratio) if normalized_ratio else 0
-                            if ratio_val < 1 and ratio_val > 0:  # 确保分享率大于0且小于1才算低分享率
-                                low_ratio_count += 1
-                                logger.info(f"【总览】检测到低分享率用户: {invitee.get('username', '未知')}, 分享率={ratio_str}({ratio_val})")
-                        except (ValueError, TypeError) as e:
-                            # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}, 错误: {str(e)}")
 
                     # 合并站点信息和数据到一张卡片
                     site_card = {
@@ -2883,10 +2833,16 @@ class InviteManage(_PluginBase):
                         })
 
                     cards.append(site_card)
-                                # 添加药单组件到总览下方
+
+            # 添加药单组件到总览下方
             drug_component = self.presc.getComponent()
             if drug_component:
                 page_content.append(drug_component)
+
+            # 将邀请用户统计添加到药单下面
+            invite_component = self._get_invite_component(invite_total)
+            if invite_component:
+                page_content.append(invite_component)
 
             # 将站点卡片添加到页面
             page_content.extend(cards)
@@ -2915,6 +2871,342 @@ class InviteManage(_PluginBase):
                     "text": f"生成详情页面失败: {str(e)}"
                 }
             }]
+
+    @staticmethod
+    def _create_merged_email_table(invitees):
+        """创建邮箱合并的表格行"""
+        table_rows = []
+        blacklist = {}
+
+        if not invitees:
+            return table_rows
+
+        # 按邮箱排序
+        sorted_invitees = sorted(invitees, key=lambda x: x.get("email", ""))
+
+        email_groups = []
+        current_group = []
+
+        # 分组相同邮箱的行
+        for invitee in sorted_invitees:
+            email = invitee.get("email", "")
+            if not current_group or email == current_group[0].get("email", ""):
+                current_group.append(invitee)
+            else:
+                email_groups.append(current_group)
+                current_group = [invitee]
+
+        if current_group:
+            email_groups.append(current_group)
+
+        # 为每个分组创建表格行
+        for group in email_groups:
+            row_class = ""
+            ratio_class = ""
+            is_banned = []
+            ratio_health = []
+
+            for i, invitee in enumerate(group):
+                _is_banned = invitee.get('enabled')
+                if _is_banned:
+                    is_banned.append(_is_banned.lower())
+                _ratio_health = invitee.get('ratio_health')
+                if _ratio_health:
+                    ratio_health.append(_ratio_health)
+
+                if _is_banned.lower() == "no" and _ratio_health in ["neutral", "danger", "warning"]:
+                    _email = invitee.get("email", "")
+                    if _email and not _email in blacklist.keys():
+                        blacklist[_email] = invitee.get("username", "")
+
+            if "no" in is_banned:
+                row_class = "error"  # 被ban用户使用红色背景
+            elif "danger" in ratio_health:
+                row_class = "error-lighten-4"  # 危险使用红色背景
+            elif "warning" in ratio_health:
+                row_class = "warning-lighten-4"  # 警告使用橙色背景
+            elif "neutral" in ratio_health:
+                row_class = "grey-lighten-3"  # 无数据使用灰色背景
+
+            if "danger" in ratio_health:
+                ratio_class = "text-error font-weight-bold"
+            elif "warning" in ratio_health:
+                ratio_class = "text-warning font-weight-bold"
+            elif "neutral" in ratio_health:
+                ratio_class = "text-grey"
+            elif "good" in ratio_health:
+                ratio_class = "text-success"
+            elif "excellent" in ratio_health:
+                ratio_class = "text-success font-weight-bold"
+
+            for i, invitee in enumerate(group):
+                row_content = [
+                    {"component": "td", "text": invitee.get("site_name")},
+                    {
+                        "component": "td",
+                        "content": [{
+                            "component": "VBtn",
+                            "props": {
+                                "variant": "text",
+                                "href": invitee.get("profile_url", ""),
+                                "target": "_blank",
+                                "density": "compact"
+                            },
+                            "text": invitee.get("username", "")
+                        }]
+                    },
+                    {"component": "td", "text": invitee.get("uploaded", "")},
+                    {"component": "td", "text": invitee.get("downloaded", "")},
+                    {
+                        "component": "td",
+                        "props": {"class": ratio_class},
+                        "text": invitee.get("ratio", "")
+                    },
+                    {
+                        "component": "td",
+                        "props": {
+                            "class": ("text-success" if invitee.get('status') == '已确认' else "") +
+                                    (" text-error font-weight-bold" if invitee.get('enabled', '').lower() == 'no' else "")
+                        },
+                        "text": invitee.get("status", "") or (" 已禁用" if invitee.get('enabled', '').lower() == 'no' else "")
+                    }
+                ]
+
+                # 只有第一行有邮箱单元格（带rowspan）
+                if i == 0:
+                    email_cell = {
+                        "component": "td",
+                        "props": {"rowspan": len(group)},
+                        "text": invitee.get("email", "")
+                    }
+                    # 将邮箱单元格插入到正确位置（索引2）
+                    row_content.insert(2, email_cell)
+                else:
+                    # 非第一行没有邮箱单元格
+                    pass
+
+                table_rows.append({
+                    "component": "tr",
+                    "props": {"class": row_class},
+                    "content": row_content
+                })
+        table_blacklist = [
+            {
+                "component": "tr",
+                "content": [
+                    {"component": "td", "text": email},
+                    {"component": "td", "text": name},
+                ]
+            } for email, name in blacklist.items()
+        ]
+        return table_blacklist, table_rows
+
+    def _get_invite_component(self, data: dict):
+        if len(data.keys()) == 0:
+            return None
+
+        logger.debug(f"有{len(data.keys())}个站点存在邀请用户")
+
+        invitees_total = []
+        for site_name, invitees in data.items():
+            for invitee in invitees:
+                invitee["site_name"] = site_name
+                invitees_total.append(invitee)
+
+        table_blacklist, table_rows = self._create_merged_email_table(invitees_total)
+
+        component = {
+            "component": "VCard",
+            "props": {
+                "variant": "flat",
+                "class": "mt-4"
+            },
+            "content": [
+                {
+                    "component": "VCardItem",
+                    "content": [
+                        {
+                            "component": "VCardTitle",
+                            "props": {
+                                "class": "text-h6"
+                            },
+                            "text": "邀请汇总"
+                        }
+                    ]
+                },
+                {
+                    "component": "VCardText",
+                    "content": [
+                        {
+                            "component": "VExpansionPanels",
+                            "props": {
+                                "variant": "accordion",
+                                "class": "mt-2"
+                            },
+                            "content": [
+
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+        if table_blacklist:
+            blacklist_component = {
+                "component": "VExpansionPanel",
+                "content": [
+                    {
+                        "component": "VExpansionPanelTitle",
+                        # 模仿站点卡片样式添加图标
+                        "content": [
+                            {
+                                "component": "VIcon",
+                                "props": {
+                                    "start": True,
+                                    "color": "error",
+                                },
+                                "text": "mdi-email-remove-outline",
+                            },
+                            {
+                                "component": "span",
+                                "text": f"黑名单（{len(table_blacklist)}）"
+                            }
+                        ]
+                    },
+                    {
+                        "component": "VExpansionPanelText",
+                        # 移除内边距以使表格更紧凑
+                        "props": {
+                            "class": "pa-0"
+                        },
+                        "content": [
+                            {
+                                "component": "VTable",
+                                "props": {
+                                    "density": "compact",
+                                    "hover": True
+                                },
+                                "content": [
+                                    {
+                                        "component": "thead",
+                                        "content": [
+                                            {
+                                                "component": "tr",
+                                                "content": [
+                                                    {
+                                                        "component": "th",
+                                                        "text": "邮箱"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "用户名"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "component": "tbody",
+                                        "content": table_blacklist
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+            component["content"][1]["content"][0]["content"].append(blacklist_component)
+
+        if table_rows:
+            table_rows_component = {
+                "component": "VExpansionPanel",
+                "content": [
+                    {
+                        "component": "VExpansionPanelTitle",
+                        # 模仿站点卡片样式添加图标
+                        "content": [
+                            {
+                                "component": "VIcon",
+                                "props": {
+                                    "start": True,
+                                    "color": "blue-grey"
+                                },
+                                "text": "mdi-human-queue"
+                            },
+                            {
+                                "component": "span",
+                                "text": f"邀请汇总（{len(table_rows)}）"
+                            }
+                        ]
+                    },
+                    {
+                        "component": "VExpansionPanelText",
+                        # 移除内边距以使表格更紧凑
+                        "props": {
+                            "class": "pa-0"
+                        },
+                        "content": [
+                            {
+                                "component": "VTable",
+                                "props": {
+                                    "density": "compact",
+                                    "hover": True
+                                },
+                                "content": [
+                                    {
+                                        "component": "thead",
+                                        "content": [
+                                            {
+                                                "component": "tr",
+                                                "content": [
+                                                    {
+                                                        "component": "th",
+                                                        "text": "站点"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "用户名"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "邮箱"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "上传量"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "下载量"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "分享率"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "状态"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "component": "tbody",
+                                        "content": table_rows
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+            component["content"][1]["content"][0]["content"].append(table_rows_component)
+
+            return component
+
+        return None
 
     def stop_service(self):
         """
