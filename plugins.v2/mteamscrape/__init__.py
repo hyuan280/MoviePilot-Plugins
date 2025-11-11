@@ -22,7 +22,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -71,13 +71,37 @@ class MTeamScrape(_PluginBase):
                 resource_regulars = self._resource_regulars.split("\n")
                 if len(resource_regulars) > 0:
                     for res_reg in resource_regulars:
-                        mode = res_reg.split(":")[0]
-                        reg = res_reg.replace(f"{mode}:", "")
-                        if not mode or not reg:
-                            logger.error(f"配置错误：{res_reg}")
+                        res_regs = res_reg.split("::")
+                        if len(res_regs) != 2 and len(res_regs) != 4 and len(res_regs) != 6:
+                            logger.error(f"配置格式错误：{res_reg}, 配置方式(mode::reg[::group::text][::group::text])")
                             self._enabled = False
                             break
-                        self._res_regs.append({"mode": mode, "reg": reg})
+
+                        mode = res_regs[0]
+                        reg = res_regs[1]
+                        if len(res_regs) >= 4:
+                            try:
+                                group1 = int(res_regs[2])
+                                text1 = res_regs[3]
+                            except Exception as e:
+                                logger.error(f"配置捕获组错误：{res_reg}, 配置方式(mode::reg::group::text[::group::text])")
+                                self._enabled = False
+                                break
+                        else:
+                            group1 = 0
+                            text1 = "%s"
+                        if len(res_regs) >= 6:
+                            try:
+                                group2 = int(res_regs[4])
+                                text2 = res_regs[5]
+                            except Exception as e:
+                                logger.error(f"配置捕获组错误：{res_reg}, 配置方式(mode::reg::group::text::group::text)")
+                                self._enabled = False
+                                break
+                        else:
+                            group2 = 0
+                            text2 = "%s"
+                        self._res_regs.append({"mode": mode, "reg": reg, "name_group": group1, "name_text": text1, "search_group": group2, "search_text": text2})
 
             logger.info(f"插件使能：{self._enabled}")
             logger.info(f"您的配置：{self._res_regs}")
@@ -207,9 +231,15 @@ class MTeamScrape(_PluginBase):
         mediainfo.original_title = data.get("name")
         for res_reg in self._res_regs:
             reg = res_reg.get("reg")
+            group = res_reg.get("name_group")
+            text = res_reg.get("name_text")
             r = re.search(reg, mediainfo.original_title)
             if r:
-                mediainfo.title = r.group(0).strip()
+                try:
+                    mediainfo.title = text % r.group(group).strip()
+                except IndexError as e:
+                    logger.error(f"re匹配没有组{group}")
+                    mediainfo.title = r.group(0).strip()
                 mediainfo.en_title = mediainfo.title
                 break
 
@@ -272,6 +302,22 @@ class MTeamScrape(_PluginBase):
 
         return mediainfos
 
+    def __name_match(self, res_name):
+        reg_matchs = []
+        res_names = []
+        for res_reg in self._res_regs:
+            reg = res_reg.get("reg")
+            group = res_reg.get("search_group")
+            text = res_reg.get("search_text")
+            r = re.search(reg, res_name)
+            if r:
+                _res_name = text % r.group(group)
+                if _res_name not in res_names:
+                    res_names.append(_res_name)
+                    reg_matchs.append({"mode": res_reg.get("mode"), "res_name": _res_name})
+
+        return reg_matchs
+
     def recognize_media(self, meta: MetaBase = None,
                         mtype: Optional[MediaType] = None,
                         tmdbid: Optional[int] = None,
@@ -301,12 +347,7 @@ class MTeamScrape(_PluginBase):
         res_name = meta.org_string
         logger.info(f"使用馒头识别 {res_name}")
 
-        reg_matchs = []
-        for res_reg in self._res_regs:
-            reg = res_reg.get("reg")
-            r = re.search(reg, res_name)
-            if r:
-                reg_matchs.append({"mode": res_reg.get("mode"), "res_name": r.group(0)})
+        reg_matchs = self.__name_match(res_name)
 
         logger.debug(f"将搜索下列资源：{reg_matchs}")
 
@@ -376,12 +417,7 @@ class MTeamScrape(_PluginBase):
         res_name = meta.org_string
         logger.info(f"使用馒头识别 {res_name}")
 
-        reg_matchs = []
-        for res_reg in self._res_regs:
-            reg = res_reg.get("reg")
-            r = re.search(reg, res_name)
-            if r:
-                reg_matchs.append({"mode": res_reg.get("mode"), "res_name": r.group(0)})
+        reg_matchs = self.__name_match(res_name)
 
         logger.debug(f"将搜索下列资源：{reg_matchs}")
 
@@ -480,7 +516,9 @@ class MTeamScrape(_PluginBase):
                                             'model': 'resource_regulars',
                                             'label': '资源匹配正则表达式',
                                             'rows': 3,
-                                            'placeholder': 'adult:[a-zA-Z]+-[0-9]+'
+                                            'placeholder': '''模式::名称正则表达式::刮削名称捕获组::刮削名称格式化字符串::搜索名称捕获组::搜索名称格式化字符串
+adult::[a-zA-Z]+-[0-9]+::0::%s::0::%s
+adult::^(FC2-?PPV-)([0-9]{7,})::2::FC2-PPV-%s::2::PPV-%s'''
                                         }
                                     }
                                 ]
