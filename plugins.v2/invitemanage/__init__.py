@@ -6,6 +6,7 @@ import os
 import re
 import json
 import time
+import base64
 import threading
 from typing import Any, List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
@@ -93,7 +94,7 @@ class Prescription():
         # 生成药单内容字符串 - 保持统一的格式
         med_text = ""
         for site in med_data["details"]:
-            med_text += f"站点[{site['site']}]: 剩余[{site['remain']}]个. 可购买[{site['can_buy']}]个\r\n"
+            med_text += f"{site['site'].strip()} * {site['remain']+site['can_buy']}\r\n"
 
         # 使用 json.dumps 来安全地将 Python 字符串嵌入 JS 字符串
         js_safe_med_text = json.dumps(med_text)
@@ -357,7 +358,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.5"
+    plugin_version = "1.0.6"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -375,6 +376,7 @@ class InviteManage(_PluginBase):
     _cron = "0 9 * * *"  # 默认每天早上9点检查一次
     _onlyonce = False
     _manage_sites = []  # 支持多选的站点列表
+    _site_rules = ""
 
     # 站点助手
     sites: SitesHelper = None
@@ -434,6 +436,7 @@ class InviteManage(_PluginBase):
             self._notify = config.get("notify", False)
             self._cron = config.get("cron", "0 9 * * *")
             self._onlyonce = config.get("onlyonce", False)
+            self._site_rules = config.get("site_rules", "")
 
             # 处理站点ID
             self._manage_sites = []
@@ -534,7 +537,8 @@ class InviteManage(_PluginBase):
             "notify": self._notify,
             "cron": self._cron,
             "onlyonce": self._onlyonce,
-            "site_ids": self._manage_sites
+            "site_ids": self._manage_sites,
+            "site_rules": self._site_rules
         }
         # 使用父类的update_config方法而不是自己的方法，避免递归
         super().update_config(config)
@@ -579,6 +583,13 @@ class InviteManage(_PluginBase):
             "methods": ["GET"],
             "summary": "刷新数据",
             "description": "强制刷新所有站点数据",
+        }, {
+            "path": "/get_invite",
+            "endpoint": self.get_invite,
+            "methods": ["GET"],
+            "summary": "获取药单",
+            "description": "获取所有站点的可发放邀请列表",
+            "allow_anonymous": True,
         }]
 
     def get_dashboard_meta(self) -> Optional[List[Dict[str, str]]]:
@@ -1068,6 +1079,28 @@ class InviteManage(_PluginBase):
                                 },
                                 'content': [
                                     {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'site_rules',
+                                            'label': '站点规则',
+                                            'rows': 2,
+                                            'placeholder': '配置json的base64编码（utf-8）'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
                                         'component': 'VCronField',
                                         'props': {
                                             'model': 'cron',
@@ -1106,7 +1139,8 @@ class InviteManage(_PluginBase):
             "notify": self._notify,
             "cron": "0 9 * * *",
             "onlyonce": False,
-            "site_ids": self._manage_sites
+            "site_ids": self._manage_sites,
+            "site_rules": ""
         }
 
     def get_page(self) -> List[dict]:
@@ -3448,11 +3482,67 @@ class InviteManage(_PluginBase):
                 "data": {
                     "sites": site_data,
                     "last_update": last_update
-            }
+                }
             }
         except Exception as e:
             logger.error(f"获取邀请成员失败: {str(e)}")
             return {"code": 1, "message": f"获取邀请成员失败: {str(e)}"}
+
+    def get_invite(self, apikey: str = None, site_name: str = None) -> dict:
+        """
+        获取邀请药单
+        """
+        if not self._enabled:
+            return {"code": 1, "message": "插件未启用!"}
+
+        try:
+            med_data = self.presc._export()
+            if not med_data["details"]:
+                # 重新生成药单页面
+                self.get_page()
+                med_data = self.presc._export()
+
+            if not med_data["details"]:
+                return {"code": 0, "message": "没有可以发送的邀请"}
+
+            # 获取最后更新时间
+            last_update = self.data_manager.get_last_update_time()
+            result_data = []
+            if self._site_rules:
+                try:
+                    jsonstr = base64.b64decode(self._site_rules).decode('utf-8')
+                    site_rules = json.loads(jsonstr)
+                    for detail in med_data["details"]:
+                        if not detail.get("site"):
+                            continue
+                        site_rule = site_rules.get(detail.get("site"))
+                        if site_rule:
+                            site_rule["site"] = detail.get("site")
+                            site_rule["number"] = detail.get("remain", 0) + detail.get("can_buy", 0)
+                            result_data.append(site_rule)
+                        else:
+                            site_rule = {"site": detail.get("site"), "number": detail.get("remain", 0) + detail.get("can_buy", 0)}
+                            result_data.append(site_rule)
+                except Exception as e:
+                    logger.error(f"站点规则填写错误: {str(e)}")
+            if len(result_data) == 0:
+                result_data = [{
+                    "site": data.get("site"),
+                    "number": data.get("remain", 0) + data.get("can_buy", 0)
+                } for data in med_data["details"]]
+
+            return {
+                "code": 0,
+                "message": "获取成功",
+                "data": {
+                    "invites": result_data,
+                    "last_update": last_update
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"获取邀请药单: {str(e)}")
+            return {"code": 1, "message": f"获取邀请药单: {str(e)}"}
 
     def refresh_data(self, apikey: str = None) -> dict:
         """

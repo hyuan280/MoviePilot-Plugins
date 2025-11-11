@@ -110,5 +110,22 @@ MoviePilot官方插件市场：https://github.com/jxxghp/MoviePilot-Plugins
   - 发送通知：发送通知
   - 立即运行一次：启动插件时立即运行一次
   - 选择站点：选择刷新的站点，支持多选，不选择则默认所有站点，刷新方式为增量刷新
-  - 执行周期：cron表达式
+  - 站点规则：配置json的base64编码（utf-8）
+    ```json
+    {
+      "织梦": {
+          "status": "open",
+          "ptd_ptpp": "需要",
+          "check": "没有",
+          "request": "两站低隐私"
+      }
+    }
+    ```
+    |配置|可选值|描述|
+    |:--:|:--:|:--:|
+    |status|open/close|表示是否发药|
+    |ptd_ptpp|需要/不需要|表示是否检查pt图|
+    |check|字符串或字符串数组|新手考核条件|
+    |request|字符串或字符串数组|发药要求|
+  - 执行周期：cron表达式，建议一天一次
 
