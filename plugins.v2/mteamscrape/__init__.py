@@ -22,7 +22,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.0.1"
+    plugin_version = "1.0.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -314,7 +314,13 @@ class MTeamScrape(_PluginBase):
                 _res_name = text % r.group(group)
                 if _res_name not in res_names:
                     res_names.append(_res_name)
-                    reg_matchs.append({"mode": res_reg.get("mode"), "res_name": _res_name})
+                    reg_match = {"mode": res_reg.get("mode"), "res_name": _res_name}
+                    part_reg = f"{reg}-(\\d+)\\b"
+                    p = re.search(part_reg, res_name)
+                    if p:
+                        part_str = p.groups()[-1]
+                        reg_match["part"] = part_str
+                    reg_matchs.append(reg_match)
 
         return reg_matchs
 
@@ -363,6 +369,8 @@ class MTeamScrape(_PluginBase):
                 continue
             for mediainfo in mediainfos:
                 if mediainfo.poster_path and mediainfo.title == reg_match.get("res_name"):
+                    if reg_match.get("part"):
+                        meta.part=reg_match.get("part")
                     return mediainfo
 
         for reg_match in reg_matchs:
@@ -371,6 +379,8 @@ class MTeamScrape(_PluginBase):
                 continue
             for mediainfo in mediainfos:
                 if mediainfo.title == reg_match.get("res_name"):
+                    if reg_match.get("part"):
+                        meta.part=reg_match.get("part")
                     return mediainfo
 
         for reg_match in reg_matchs:
@@ -379,12 +389,16 @@ class MTeamScrape(_PluginBase):
                 continue
             for mediainfo in mediainfos:
                 if mediainfo.poster_path:
+                    if reg_match.get("part"):
+                        meta.part=reg_match.get("part")
                     return mediainfo
 
         for reg_match in reg_matchs:
             mediainfos = reg_match.get("mediainfo")
             if not mediainfos:
                 continue
+            if reg_match.get("part"):
+                meta.part=reg_match.get("part")
             return mediainfos[0]
 
         return None
@@ -434,6 +448,8 @@ class MTeamScrape(_PluginBase):
                 continue
             for mediainfo in mediainfos:
                 if mediainfo.poster_path and mediainfo.title == reg_match.get("res_name"):
+                    if reg_match.get("part"):
+                        meta.part=reg_match.get("part")
                     return mediainfo
 
         for reg_match in reg_matchs:
@@ -442,6 +458,8 @@ class MTeamScrape(_PluginBase):
                 continue
             for mediainfo in mediainfos:
                 if mediainfo.title == reg_match.get("res_name"):
+                    if reg_match.get("part"):
+                        meta.part=reg_match.get("part")
                     return mediainfo
 
         for reg_match in reg_matchs:
@@ -450,12 +468,16 @@ class MTeamScrape(_PluginBase):
                 continue
             for mediainfo in mediainfos:
                 if mediainfo.poster_path:
+                    if reg_match.get("part"):
+                        meta.part=reg_match.get("part")
                     return mediainfo
 
         for reg_match in reg_matchs:
             mediainfos = reg_match.get("mediainfo")
             if not mediainfos:
                 continue
+            if reg_match.get("part"):
+                meta.part=reg_match.get("part")
             return mediainfos[0]
 
         return None
