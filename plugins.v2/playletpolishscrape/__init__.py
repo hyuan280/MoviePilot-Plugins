@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.0.2"
+    plugin_version = "3.0.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -410,6 +410,11 @@ class PlayletPolishScrape(_PluginBase):
         _path = Path(media_path)
         tv_path = _path
         file_meta = MetaInfoPath(_path)
+        org_title = file_meta.title
+        org_bracket = re.search(r"\d+.*(\(\d+\))", org_title)
+        if org_bracket:
+            org_new = org_title.replace(org_bracket.group(1), "")
+            file_meta.org_string = org_new
         org_string = file_meta.org_string
 
         se_match = re.search(r'S(\d+)E(\d+)', org_string)
@@ -436,9 +441,24 @@ class PlayletPolishScrape(_PluginBase):
             file_meta = meta_search_tv_name(file_meta, _to_chinese_tv_name(tv_name), True)
         elif file_meta.cn_name and file_meta.year:
             pass
+        elif re.search(r'番外(\d*)', org_string):
+            tv_path = _path.parent
+            tv_name = tv_path.name
+            file_meta = meta_search_tv_name(file_meta, _to_chinese_tv_name(tv_name), True)
+            story_match = re.search(r'番外(\d*)', org_string)
+            if story_match.group(1):
+                try:
+                    ep = int(story_match.group(1))
+                    file_meta.begin_season = 0
+                    file_meta.begin_episode = ep
+                except Exception as e:
+                    logger.error(f"番外集数获取错误：{org_string}")
+                    return None, tv_path
+
         elif re.search(r'^\d+([.-][0-9a-zA-Z]+)?([.-]\d+)?([集话]|本季完|完结|最终集|大结局)?.?$', org_string) \
                     or re.search(r'^\d+[.-]([0-9a-zA-Z]+)-.*', org_string) \
-                    or re.search(r'^[0-9a-zA-Z]*$', org_string):
+                    or re.search(r'^[0-9a-zA-Z]*$', org_string) \
+                    or re.search(r'^\d*月\d*日', org_string):
             logger.info(f"文件名符合剧集目录：{org_string}")
             if is_directory:
                 logger.warn(f"单独的数字目录，不处理：{media_path}")
