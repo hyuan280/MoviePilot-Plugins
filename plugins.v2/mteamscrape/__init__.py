@@ -22,7 +22,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -302,6 +302,22 @@ class MTeamScrape(_PluginBase):
 
         return mediainfos
 
+    @staticmethod
+    def __part_match(reg, res_name):
+        part_reg = f"{reg}[-_](\\d+|[a-zA-Z])\\b"
+        p = re.search(part_reg, res_name)
+        if p:
+            part_str = p.groups()[-1]
+            return True, part_str
+
+        part_reg = f"{reg}.*([Pp]art[0-9]+)"
+        p = re.search(part_reg, res_name)
+        if p:
+            part_str = p.groups()[-1]
+            return True, part_str
+
+        return False, ""
+
     def __name_match(self, res_name):
         reg_matchs = []
         res_names = []
@@ -315,10 +331,8 @@ class MTeamScrape(_PluginBase):
                 if _res_name not in res_names:
                     res_names.append(_res_name)
                     reg_match = {"mode": res_reg.get("mode"), "res_name": _res_name}
-                    part_reg = f"{reg}-(\\d+)\\b"
-                    p = re.search(part_reg, res_name)
-                    if p:
-                        part_str = p.groups()[-1]
+                    found, part_str = self.__part_match(reg, res_name)
+                    if found:
                         reg_match["part"] = part_str
                     reg_matchs.append(reg_match)
 
