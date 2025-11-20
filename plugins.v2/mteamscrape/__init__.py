@@ -22,7 +22,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.4"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -47,6 +47,7 @@ class MTeamScrape(_PluginBase):
     _enabled = False
     _site_info = None
     _resource_regulars = ""
+    _custom_part = ""
 
 
     _res_regs = []
@@ -57,6 +58,7 @@ class MTeamScrape(_PluginBase):
         if config:
             self._enabled = config.get("enabled", False)
             self._resource_regulars = config.get("resource_regulars", "")
+            self._custom_part = config.get("custom_part", "")
 
         if self._enabled:
             for site in SitesHelper().get_indexers():
@@ -302,8 +304,13 @@ class MTeamScrape(_PluginBase):
 
         return mediainfos
 
-    @staticmethod
-    def __part_match(reg, res_name):
+    def __part_match(self, reg, res_name):
+        if self._custom_part:
+            custom_parts = self._custom_part.split('\n')
+            for part_str in custom_parts:
+                if part_str in res_name:
+                    return True, part_str
+
         part_reg = f"{reg}[-_](\\d+|[a-zA-Z])\\b"
         p = re.search(part_reg, res_name)
         if p:
@@ -503,6 +510,7 @@ class MTeamScrape(_PluginBase):
         self.update_config({
             "enabled": self._enabled,
             "resource_regulars": self._resource_regulars,
+            "custom_part": self._custom_part,
         })
 
     def scheduler_job(self):
@@ -551,7 +559,7 @@ class MTeamScrape(_PluginBase):
                                         'props': {
                                             'model': 'resource_regulars',
                                             'label': '资源匹配正则表达式',
-                                            'rows': 3,
+                                            'rows': 5,
                                             'placeholder': '''模式::名称正则表达式::刮削名称捕获组::刮削名称格式化字符串::搜索名称捕获组::搜索名称格式化字符串
 adult::[a-zA-Z]+-[0-9]+::0::%s::0::%s
 adult::^(FC2-?PPV-)([0-9]{7,})::2::FC2-PPV-%s::2::PPV-%s'''
@@ -560,12 +568,34 @@ adult::^(FC2-?PPV-)([0-9]{7,})::2::FC2-PPV-%s::2::PPV-%s'''
                                 ]
                             }
                         ]
-                    },
-                ],
+                    },{
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'custom_part',
+                                            'label': '自定义part',
+                                            'rows': 5,
+                                            'placeholder': 'U3C3'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
             }
         ], {
             "enabled": False,
             "resource_regulars": "",
+            "custom_part": ""
         }
 
     def get_state(self) -> bool:
