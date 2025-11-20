@@ -300,6 +300,9 @@ class Unit3dHandler(_ISiteHandler):
                 data.append(row)
 
             for invite_data in data:
+                # 排除邀请用户没有注册的
+                if any("N/A" in item for item in invite_data):
+                    continue
                 invitee = {}
                 for index, header in enumerate(headers):
                     field = header.lower()

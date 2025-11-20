@@ -144,6 +144,10 @@ class NexusPhpHandler(_ISiteHandler):
         if not early_check_failed:
             try:
                 logger.debug(f"站点 {site_name} 早期检查通过，开始执行页面解析...")
+                if "bonusshop.php" in html_content:
+                    has_new_shop = True
+                else:
+                    has_new_shop = False
                 # Parse Invite Page (using html_content from Stage 1)
                 invite_result = self._parse_nexusphp_invite_page(site_name, html_content)
 
@@ -158,11 +162,17 @@ class NexusPhpHandler(_ISiteHandler):
 
                 # --- Original Bonus Shop Parsing Logic --- (kept exactly as before)
                 try:
-                    bonus_url = urljoin(site_url, "mybonus.php")
+                    if has_new_shop:
+                        bonus_url = urljoin(site_url, "bonusshop.php")
+                    else:
+                        bonus_url = urljoin(site_url, "mybonus.php")
                     bonus_response = session.get(bonus_url, timeout=(10, 30))
                     if bonus_response.status_code == 200:
                         logger.debug(f"站点 {site_name} 当前魔力值 {result["invite_status"]["bonus"]}，开始获取使用魔力购买邀请...")
-                        bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
+                        if has_new_shop:
+                            bonus_data = self._parse_bonus_shop_new(site_name, bonus_response.text)
+                        else:
+                            bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
                         bonus_data["bonus"] = result["invite_status"]["bonus"]
                         result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
                         result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
@@ -1148,6 +1158,69 @@ class NexusPhpHandler(_ISiteHandler):
                                 except ValueError:
                                     continue
 
+            return result
+
+        except Exception as e:
+            logger.error(f"解析站点 {site_name} 魔力值商店失败: {str(e)}")
+            return result
+
+    def _parse_bonus_shop_new(self, site_name: str, html_content: str) -> Dict[str, Any]:
+        """
+        解析魔力值商店页面-新版本
+        :param site_name: 站点名称
+        :param html_content: HTML内容
+        :return: 魔力值和邀请价格信息
+        """
+        result = {
+            "permanent_invite_price": 0, # 永久邀请价格
+            "temporary_invite_price": 0  # 临时邀请价格
+        }
+
+        # 特殊站点，不方便解析
+        sp_site_price_info = {
+            "青蛙": {
+                "permanent_invite_price": 100000, # 永久邀请价格
+                "temporary_invite_price": 60000  # 临时邀请价格
+            }
+        }
+
+        if site_name in sp_site_price_info.keys():
+            return sp_site_price_info.get(site_name)
+
+        try:
+            # 初始化BeautifulSoup对象
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            # 2. 查找邀请价格
+            # 查找包含"邀请"字符串的标题
+            invitation_titles = soup.find_all(lambda tag: tag.name == 'h3' and '邀请' in tag.get_text())
+
+            for title in invitation_titles:
+                title_text = title.get_text(strip=True)
+                # 找到对应的价格信息（在同一个卡片内）
+                card = title.find_parent('form')  # 标题在某个form容器内
+                if not card:
+                    # 如果找不到父级div，尝试找到相邻的bonus-card__footer
+                    next_sibling = title.find_next_sibling('div', class_='bonus-card__description')
+                    if next_sibling:
+                        price_span = next_sibling.find('span', class_='bonus-card__price')
+                        price = price_span.get_text(strip=True) if price_span else None
+                    else:
+                        price = None
+                else:
+                    # 在卡片内查找价格
+                    price_span = card.find('span', class_='bonus-card__price')
+                    price = price_span.get_text(strip=True) if price_span else None
+
+                if price:
+                    price = float(price.replace(',', ''))
+                    is_temporary = '临时' in title_text or '臨時' in title_text or 'temporary' in title_text
+                    if is_temporary:
+                        result["temporary_invite_price"] = price
+                        logger.debug(f"站点 {site_name} 临时邀请价格: {price}")
+                    else:
+                        result["permanent_invite_price"] = price
+                        logger.debug(f"站点 {site_name} 永久邀请价格: {price}")
             return result
 
         except Exception as e:
