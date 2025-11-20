@@ -358,7 +358,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.6"
+    plugin_version = "1.0.7"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页

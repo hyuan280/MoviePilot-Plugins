@@ -82,10 +82,11 @@ class Unit3dHandler(_ISiteHandler):
                 logger.info(f"站点 {site_name} 正在从邀请页获取邀请数量: {result["invite_url"]}")
                 invites_response = session.get(result["invite_url"], timeout=(10, 30))
                 invites_response.raise_for_status()
-                invite_counts = self._parse_unit3d_invitespage(site_name, invites_response.text)
-                result["invite_status"]["permanent_count"] = invite_counts["permanent_count"]
+                invite_info = self._parse_unit3d_invitespage(site_name, invites_response.text)
+                result["invitees"] = invite_info.get("invitees", [])
+                result["invite_status"]["permanent_count"] = invite_info.get("permanent_count", 0)
                 result["invite_status"]["temporary_count"] = 0 # 没有临时邀请
-                logger.info(f"站点 {site_name} 从邀请页获取到邀请数量: 永久={invite_counts['permanent_count']}, 临时=0")
+                logger.info(f"站点 {site_name} 从邀请页获取到邀请数量: 永久={result["invite_status"]["permanent_count"]}, 临时={result["invite_status"]["temporary_count"]}")
             except Exception as e:
                 logger.error(f"站点 {site_name} 从邀请页获取邀请数量失败: {str(e)}")
 
@@ -244,7 +245,7 @@ class Unit3dHandler(_ISiteHandler):
 
         return ""
 
-    def _parse_unit3d_invitespage(self, site_name: str, html_content: str) -> Dict[str, Any]:
+    def _parse_unit3d_invitespage(self, site_name: str, html_content: str, is_next_page: bool = False) -> Dict[str, Any]:
         """
         解析站点邀请页，获取邀请数量
         :param site_name: 站点名称
@@ -253,30 +254,134 @@ class Unit3dHandler(_ISiteHandler):
         """
         result = {
             "permanent_count": 0,
-            "temporary_count": 0
+            "temporary_count": 0,
+            "invitees": []
         }
 
         try:
             # 初始化BeautifulSoup对象
             soup = BeautifulSoup(html_content, 'html.parser')
 
-            # 查找邀请li
-            li_element = soup.find('li', class_='ratio-bar__buffer')
-            if li_element:
-                invite_tag = li_element.select_one('a')
-                if invite_tag:
-                    invite_text = invite_tag.get_text(strip=True)
-                    invite_match = re.search(r'[\s&nbsp;]*(\d+)', invite_text)
-                    if invite_match:
-                        try:
-                            result["permanent_count"] = int(invite_match.group(1))
-                            logger.info(f"站点 {site_name} 从邀请页面匹配到邀请数量: 永久={result['permanent_count']}")
-                        except (ValueError, TypeError):
-                            logger.warning(f"站点 {site_name} 无法将邀请页面中的邀请数量转换为整数: {invite_match.group(1)}")
-                    else:
-                        logger.warning(f"站点 {site_name} 邀请页面未能提取邀请数量: {invite_text}")
+            if not is_next_page:
+                li_element = soup.find('li', class_='ratio-bar__buffer')
+                if li_element:
+                    invite_tag = li_element.select_one('a')
+                    if invite_tag:
+                        invite_text = invite_tag.get_text(strip=True)
+                        invite_match = re.search(r'[\s&nbsp;]*(\d+)', invite_text)
+                        if invite_match:
+                            try:
+                                result["permanent_count"] = int(invite_match.group(1))
+                                logger.info(f"站点 {site_name} 从邀请页面匹配到邀请数量: 永久={result['permanent_count']}")
+                            except (ValueError, TypeError):
+                                logger.warning(f"站点 {site_name} 无法将邀请页面中的邀请数量转换为整数: {invite_match.group(1)}")
+                        else:
+                            logger.warning(f"站点 {site_name} 邀请页面未能提取邀请数量: {invite_text}")
 
         except Exception as e:
             logger.error(f"站点 {site_name} 解析邀请页面的邀请数量失败: {str(e)}")
+            return result
+
+        try:
+            table = soup.find('table', class_='table')
+            # 获取所有表头
+            headers = []
+            for th in table.find('thead').find_all('th'):
+                headers.append(th.get_text(strip=True))
+
+            # 获取所有数据行
+            data = []
+            for tr in table.find('tbody').find_all('tr'):
+                row = []
+                for td in tr.find_all('td'):
+                    # 获取单元格文本，去除空白
+                    text = td.get_text(strip=True)
+                    row.append(text)
+                data.append(row)
+
+            for invite_data in data:
+                invitee = {}
+                for index, header in enumerate(headers):
+                    field = header.lower()
+                    if '接受者' in field or 'に受け入れられた' in field or 'Accepted' in field:
+                        invitee["username"] = invite_data[index]
+                    elif '邮箱' in field or '電郵' in field or 'メール' in field or 'e-mail' in field:
+                        invitee["email"] = invite_data[index]
+                    elif '上传量' in field or 'アップロード' in field or 'Upload' in field:
+                        invitee["uploaded"] = invite_data[index]
+                    elif '下载量' in field or 'ダウンロード' in field or 'Download' in field:
+                        invitee["downloaded"] = invite_data[index]
+                    elif '分享率' in field or '比率' in field or 'Ratio' in field:
+                        if not invite_data[index] or invite_data[index] == '---':
+                            invitee["ratio"] = '0'
+                        elif invite_data[index].lower() in ['inf.', 'inf', '无限', 'infinite', '∞']:
+                            invitee["ratio"] = '∞'
+                        else:
+                            invitee["ratio"] = invite_data[index]
+                        if invitee["ratio"] == '∞':
+                            invitee["ratio_value"] = 1e20  # 用一个非常大的数代表无限
+                        else:
+                            invitee["ratio_value"] = float(invitee["ratio"].replace(',', ''))
+                    elif '登录' in field or '登入' in field or 'のログイン' in field or 'Login' in field:
+                        invitee["last_seed_report"] = invite_data[index]
+
+                if "enabled" not in invitee:
+                    invitee["enabled"] = 'No' if invitee["last_seed_report"] == '' else 'Yes'
+
+                # 设置状态字段(如果尚未设置)
+                if "status" not in invitee:
+                    invitee["status"] = "已确认"
+
+                # 检查是否为无数据用户（上传和下载都为0或者上传是23.3 GiB下载是23.3 MiB）
+                is_no_data = False
+                if "uploaded" in invitee and "downloaded" in invitee:
+                    is_no_data = (((invitee["uploaded"] == '0' or invitee["uploaded"] == '0.00 KB' or
+                                    invitee["uploaded"].lower() == '0b') and \
+                                    (invitee["downloaded"] == '0' or invitee["downloaded"] == '0.00 KB' or
+                                    invitee["downloaded"].lower() == '0b')) or
+                                    (invitee["uploaded"] == '23.3 GiB' and invitee["downloaded"] == '23.3 MiB'))
+
+                # 添加数据状态标记
+                if is_no_data:
+                    invitee["data_status"] = "无数据"
+                    invitee["ratio_health"] = "neutral"
+                    invitee["ratio_label"] = ["无数据", "grey"]
+                if "ratio_value" in invitee:
+                    if invitee["ratio_value"] >= 1.0:
+                        invitee["ratio_health"] = "good"
+                    elif invitee["ratio_value"] >= 0.5:
+                        invitee["ratio_health"] = "warning"
+                    else:
+                        invitee["ratio_health"] = "danger"
+                else:
+                    invitee["ratio_health"] = "unknown"
+
+                # 设置分享率标签
+                if "ratio_label" not in invitee:
+                    if "ratio_health" in invitee:
+                        if invitee["ratio_health"] == "excellent":
+                            invitee["ratio_label"] = ["无限", "green"]
+                        elif invitee["ratio_health"] == "good":
+                            invitee["ratio_label"] = ["良好", "green"]
+                        elif invitee["ratio_health"] == "warning":
+                            invitee["ratio_label"] = ["较低", "orange"]
+                        elif invitee["ratio_health"] == "danger":
+                            invitee["ratio_label"] = ["危险", "red"]
+                        elif invitee["ratio_health"] == "neutral":
+                            invitee["ratio_label"] = ["无数据", "grey"]
+                        else:
+                            invitee["ratio_label"] = ["未知", "grey"]
+
+                # 将解析到的用户添加到列表中
+                if invitee.get("username"):
+                    result["invitees"].append(invitee)
+
+            if is_next_page:
+                logger.debug(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个邀请成员")
+            else:
+                logger.debug(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个邀请成员")
+
+        except Exception as e:
+            logger.error(f"站点 {site_name} 解析邀请页面的邀请用户失败: {str(e)}")
 
         return result
