@@ -358,7 +358,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.8"
+    plugin_version = "1.0.9"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -2907,13 +2907,55 @@ class InviteManage(_PluginBase):
             }]
 
     @staticmethod
-    def _create_merged_email_table(invitees):
+    def _time_ago(target_date_str):
+        """
+        计算给定时间距离现在多久以前
+        """
+        # 将字符串转换为datetime对象
+        try:
+            target_date = datetime.strptime(target_date_str, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return "刚刚"
+
+        current_date = datetime.now()
+
+        # 计算时间差
+        time_difference = current_date - target_date
+
+        # 提取天数、秒数
+        days = time_difference.days
+        seconds = time_difference.seconds
+        total_seconds = time_difference.total_seconds()
+
+        # 转换为不同的时间单位
+        if days > 365:
+            years = days // 365
+            return f"{years}年前"
+        elif days > 30:
+            months = days // 30
+            return f"{months}个月前"
+        elif days > 0:
+            return f"{days}天前"
+        elif seconds >= 3600:
+            hours = seconds // 3600
+            return f"{hours}小时前"
+        elif seconds >= 60:
+            minutes = seconds // 60
+            return f"{minutes}分钟前"
+        else:
+            return "刚刚"
+
+    def _create_merged_email_table(self, invitees):
         """创建邮箱合并的表格行"""
         table_rows = []
-        blacklist = {}
+        blacklists = []
 
         if not invitees:
             return table_rows
+
+        ban_data = self.data_manager.get_ban_data()
+        if ban_data:
+            blacklists = [item.get("data") for _, item in ban_data.items()]
 
         # 按邮箱排序
         sorted_invitees = sorted(invitees, key=lambda x: x.get("email", ""))
@@ -2950,9 +2992,16 @@ class InviteManage(_PluginBase):
 
                 if _is_banned.lower() == "no" and _ratio_health in ["neutral", "danger", "warning"]:
                     _email = invitee.get("email", "")
-                    if _email and not _email in blacklist.keys():
-                        blacklist[_email] = invitee.get("username", "")
-
+                    black_emails = [ i.get("email") for i in blacklists]
+                    if _email and not _email in black_emails:
+                        _ban_data = {
+                            "email": _email,
+                            "username": invitee.get("username", ""),
+                            "time": self._time_ago(invitee.get("last_login_time") or invitee.get("last_seed_report") or ""),
+                            "ban_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        blacklists.append(_ban_data)
+                        self.data_manager.update_ban_data(_ban_data["username"], _ban_data)
             if "no" in is_banned:
                 row_class = "error"  # 被ban用户使用红色背景
             elif "danger" in ratio_health:
@@ -3024,16 +3073,31 @@ class InviteManage(_PluginBase):
                     "props": {"class": row_class},
                     "content": row_content
                 })
-        table_blacklist = [
+
+        def parse_time_safe(time_str):
+            if not time_str or time_str.strip() == "":
+                return datetime.min  # 返回最小时间
+            try:
+                return datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return datetime.min
+
+        sorted_blacklists = [
+            item for item in sorted(blacklists, key=lambda x: parse_time_safe(x["ban_time"]))
+        ]
+
+        table_blacklists = [
             {
                 "component": "tr",
                 "content": [
-                    {"component": "td", "text": email},
-                    {"component": "td", "text": name},
+                    {"component": "td", "text": items.get("email")},
+                    {"component": "td", "text": items.get("username")},
+                    {"component": "td", "text": items.get("time")},
+                    {"component": "td", "text": items.get("ban_time")},
                 ]
-            } for email, name in blacklist.items()
+            } for items in sorted_blacklists
         ]
-        return table_blacklist, table_rows
+        return table_blacklists, table_rows
 
     def _get_invite_component(self, data: dict):
         if len(data.keys()) == 0:
@@ -3047,7 +3111,7 @@ class InviteManage(_PluginBase):
                 invitee["site_name"] = site_name
                 invitees_total.append(invitee)
 
-        table_blacklist, table_rows = self._create_merged_email_table(invitees_total)
+        table_blacklists, table_rows = self._create_merged_email_table(invitees_total)
 
         component = {
             "component": "VCard",
@@ -3086,7 +3150,7 @@ class InviteManage(_PluginBase):
             ]
         }
 
-        if table_blacklist:
+        if table_blacklists:
             blacklist_component = {
                 "component": "VExpansionPanel",
                 "content": [
@@ -3104,7 +3168,7 @@ class InviteManage(_PluginBase):
                             },
                             {
                                 "component": "span",
-                                "text": f"黑名单（{len(table_blacklist)}）"
+                                "text": f"黑名单（{len(table_blacklists)}）"
                             }
                         ]
                     },
@@ -3135,6 +3199,14 @@ class InviteManage(_PluginBase):
                                                     {
                                                         "component": "th",
                                                         "text": "用户名"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "最后活动时间"
+                                                    },
+                                                    {
+                                                        "component": "th",
+                                                        "text": "记录被禁日期"
                                                     }
                                                 ]
                                             }
@@ -3142,7 +3214,7 @@ class InviteManage(_PluginBase):
                                     },
                                     {
                                         "component": "tbody",
-                                        "content": table_blacklist
+                                        "content": table_blacklists
                                     }
                                 ]
                             }

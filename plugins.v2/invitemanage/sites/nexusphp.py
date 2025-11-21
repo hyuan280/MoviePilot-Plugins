@@ -365,6 +365,15 @@ class NexusPhpHandler(_ISiteHandler):
             # Return the result dictionary indicating the early failure
             return result
 
+        for invitee in result["invitees"]:
+            if invitee["enabled"].lower() == "no" and invitee["ratio_health"] in ["neutral", "danger", "warning"] and invitee["profile_url"]:
+                logger.debug(f"站点 {site_name} 访问禁用用户主页：{invitee["profile_url"]}")
+                user_response = session.get(invitee["profile_url"], timeout=(10, 30))
+                user_response.raise_for_status()
+                match = re.findall(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", user_response.text)
+                if match:
+                    invitee["last_login_time"] = max(match)
+
         # If parsing was successful (not early_check_failed and no parsing error)
         return result
 
