@@ -87,6 +87,7 @@ MoviePilot官方插件市场：https://github.com/jxxghp/MoviePilot-Plugins
 - 配置：
   - 启用插件：启用插件，定时运行转移任务
   - 发送通知：发送通知
+  - 清除统计数据: 清除保存的统计数据
   - 立即运行一次：启动插件时立即运行一次
   - 执行周期：cron表达式
   - 下载器：目前只支持TR下载器检查
