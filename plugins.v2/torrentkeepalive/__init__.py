@@ -9,12 +9,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import settings
+from app.db.site_oper import SiteOper
 from app.helper.downloader import DownloaderHelper
 from app.log import logger
 from app.modules.qbittorrent import Qbittorrent
 from app.modules.transmission import Transmission
 from app.plugins import _PluginBase
 from app.schemas import NotificationType, ServiceInfo
+from app.utils.string import StringUtils
 
 from plugins.torrentkeepalive.data import DataManager
 
@@ -26,7 +28,7 @@ class TorrentKeepAlive(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.5"
+    plugin_version = "1.0.6"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -359,7 +361,7 @@ class TorrentKeepAlive(_PluginBase):
             for _,d in data.items():
                 cached_data.append({**d, "downloader": downloader_name})
 
-        cached_data.sort(key=lambda x:x.get("cnt"))
+        cached_data.sort(key=lambda x:x.get("cnt"), reverse=True)
 
         if self._max_number > 0 and self._max_number <= len(cached_data):
             max_number = self._max_number
@@ -378,6 +380,7 @@ class TorrentKeepAlive(_PluginBase):
                     "content": [
                         {"component": "td", "text": item.get("name")},
                         {"component": "td", "text": item.get("downloader")},
+                        {"component": "td", "text": item.get("site")},
                         {"component": "td", "text": item.get("cnt")},
                         {
                             "component": "td",
@@ -412,6 +415,10 @@ class TorrentKeepAlive(_PluginBase):
                                                 'component': 'th',
                                                 'props': {'class': 'text-start ps-4'},
                                                 'text': '下载器'
+                                            },{
+                                                'component': 'th',
+                                                'props': {'class': 'text-start ps-4'},
+                                                'text': '站点'
                                             },{
                                                 'component': 'th',
                                                 'props': {'class': 'text-start ps-4'},
@@ -486,6 +493,7 @@ class TorrentKeepAlive(_PluginBase):
         if not self.__validate_config():
             return
 
+        site_oper = SiteOper()
         services = [self.service_info(downloader) for downloader in self._downloaders]
         for service in services:
             downloader: Optional[Union[Qbittorrent, Transmission]] = service.instance if service else None
@@ -499,22 +507,34 @@ class TorrentKeepAlive(_PluginBase):
                 if self._event.is_set():
                     logger.info(f"种子保活服务停止")
                     return
+                todo_alive = True
                 for status in torrent.tracker_stats:
-                    if status.next_announce_time == 0:
-                        logger.info(f"{torrent}")
-                        keep_alive_torrents_ids.append(torrent.id)
-
-                        if all_torrents.get(torrent.hashString):
-                            all_torrents[torrent.hashString]["cnt"] = all_torrents[torrent.hashString]["cnt"] + 1
-                            all_torrents[torrent.hashString]["status"] = "waiting"
-                        else:
-                            all_torrents[torrent.hashString] = {
-                                "name": torrent.name,
-                                "id": torrent.id,
-                                "cnt": 1,
-                                "status": "waiting",
-                            }
+                    if status.next_announce_time != 0:
+                        todo_alive = False
                         break
+                if todo_alive:
+                    logger.info(f"{torrent}")
+                    keep_alive_torrents_ids.append(torrent.id)
+
+                    last_cnt = all_torrents.get(torrent.hashString, {}).get("cnt", 0)
+                    site_name = []
+                    for t in torrent.tracker_list:
+                        domain = StringUtils.get_url_domain(t)
+                        if domain:
+                            site = site_oper.get_by_domain(domain)
+                            if site:
+                                site_name = [site.name]
+                                break
+                            else:
+                                site_name.append(domain)
+
+                    all_torrents[torrent.hashString] = {
+                        "name": torrent.name,
+                        "id": torrent.id,
+                        "site": ','.join(site_name) if site_name else "未知站点",
+                        "cnt": last_cnt + 1,
+                        "status": "waiting",
+                    }
 
             if keep_alive_torrents_ids:
                 torrent_cnt = len(keep_alive_torrents_ids)
