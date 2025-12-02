@@ -125,11 +125,12 @@
     "name": "馒头资源刮削",
     "description": "从馒头站点识别资源刮削",
     "labels": "刮削",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "icon": "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png",
     "author": "hyuan280",
     "level": 2,
     "history": {
+      "v1.0.5": "修复代码错误",
       "v1.0.4": "增加自定义part配置",
       "v1.0.3": "添加一些part匹配的正则表达式",
       "v1.0.2": "添加资源分part刮削，在emby中显示为电影的不同版本",

@@ -22,7 +22,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.0.4"
+    plugin_version = "1.0.5"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -183,7 +183,7 @@ class MTeamScrape(_PluginBase):
             logger.warn(f"搜索 {keyword} 失败，错误码：{res.status_code}")
             return []
         else:
-            logger.warn(f"搜索 {keyword} 失败，无法连接 {self._domain}")
+            logger.warn(f"搜索 {keyword} 失败，无法连接网站api")
             return []
 
     async def async_search(self, mode: str, keyword: str, mtype: MediaType = None, page: Optional[int] = 0):
@@ -220,7 +220,7 @@ class MTeamScrape(_PluginBase):
             logger.warn(f"搜索 {keyword} 失败，错误码：{res.status_code}")
             return []
         else:
-            logger.warn(f"搜索 {keyword} 失败，无法连接 {self._domain}")
+            logger.warn(f"搜索 {keyword} 失败，无法连接网站api")
             return []
 
     def __parse_mediainfo(self, meta: MetaBase, data: dict):
