@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.0.3"
+    plugin_version = "3.0.4"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -106,6 +106,8 @@ class PlayletPolishScrape(_PluginBase):
     _storage_type = StorageSchema.Local.value
     _transfer_type = "link"
     _monitor_confs = ""
+    _rename_title = ""
+    _invalid_name = ""
     _polish_keywords = ""
     _exclude_keywords = ""
     _onlyonce = False
@@ -143,6 +145,7 @@ class PlayletPolishScrape(_PluginBase):
             self._transfer_type = config.get("transfer_type") or "link"
             self._monitor_confs = config.get("monitor_confs") or ""
             self._rename_title = config.get("rename_title") or ""
+            self._invalid_name = config.get("invalid_name") or ""
             self._polish_keywords = config.get("polish_keywords") or ""
             self._exclude_keywords = config.get("exclude_keywords") or ""
             self._onlyonce = config.get("onlyonce")
@@ -255,6 +258,7 @@ class PlayletPolishScrape(_PluginBase):
             "transfer_type": self._transfer_type,
             "monitor_confs": self._monitor_confs,
             "rename_title": self._rename_title,
+            "invalid_name": self._invalid_name,
             "polish_keywords": self._polish_keywords,
             "exclude_keywords": self._exclude_keywords,
             "onlyonce": self._onlyonce,
@@ -370,6 +374,17 @@ class PlayletPolishScrape(_PluginBase):
                            event_path=event_path,
                            source_dir=source_dir)
 
+    def __check_invalid_name(self, search_str):
+        invalid_names = [r'^\d*月\d*日', '余部C边短剧合集']
+        if self._invalid_name:
+            invalid_names.extend(self._invalid_name.split("\n"))
+
+        for invalid_name in invalid_names:
+            if re.search(invalid_name, search_str):
+                return True
+
+        return False
+
     def __meta_complement(self, is_directory: bool, media_path: str):
 
         def _meta_rename_title(file_meta):
@@ -458,7 +473,7 @@ class PlayletPolishScrape(_PluginBase):
         elif re.search(r'^\d+([.-][0-9a-zA-Z]+)?([.-]\d+)?([集话]|本季完|完结|最终集|大结局)?.?$', org_string) \
                     or re.search(r'^\d+[.-]([0-9a-zA-Z]+)-.*', org_string) \
                     or re.search(r'^[0-9a-zA-Z]*$', org_string) \
-                    or re.search(r'^\d*月\d*日', org_string):
+                    or self.__check_invalid_name(org_string):
             logger.info(f"文件名符合剧集目录：{org_string}")
             if is_directory:
                 logger.warn(f"单独的数字目录，不处理：{media_path}")
@@ -1391,6 +1406,28 @@ class PlayletPolishScrape(_PluginBase):
                                     {
                                         'component': 'VTextarea',
                                         'props': {
+                                            'model': 'invalid_name',
+                                            'label': '无效剧名',
+                                            'rows': 3,
+                                            'placeholder': '单集剧名无效，使用父目录的名称，一行一个，支持正则表达式\n^\d*月\d*日\n余部C边短剧合集'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
                                             'model': 'rename_title',
                                             'label': '标题重命名',
                                             'rows': 3,
@@ -1552,6 +1589,7 @@ class PlayletPolishScrape(_PluginBase):
             "storage_type": "local",
             "transfer_type": "link",
             "monitor_dirs": "",
+            "invalid_name": "",
             "rename_title": "",
             "polish_keywords": "",
             "exclude_keywords": "",
