@@ -138,5 +138,17 @@
       "v1.0.1": "更新资源名称匹配、搜索、刮削的正则配置方式",
       "v1.0.0": "初步识别资源"
     }
+  },
+  "TrackerUpdate" : {
+    "name": "Tracker批量更新",
+    "description": "批量修改种子tracker",
+    "labels": "下载器",
+    "version": "1.0.0",
+    "icon": "trackereditor_A.png",
+    "author": "hyuan280",
+    "level": 1,
+    "history": {
+      "v1.0.0": "支持MP配置的下载器批量更新种子tracker"
+    }
   }
 }

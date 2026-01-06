@@ -131,3 +131,19 @@ MoviePilot官方插件市场：https://github.com/jxxghp/MoviePilot-Plugins
     |request|字符串或字符串数组|发药要求|
   - 执行周期：cron表达式，建议一天一次
 
+### 七、TrackerUpdate Tracker批量更新
+- 描述：批量修改种子tracker
+- 配置：
+  - 启用插件：启用插件
+  - 发送通知：发送通知
+  - 立即运行一次：启动插件时立即运行一次
+  - 执行周期：cron表达式
+  - 下载器：MP已配置的下载器
+  - tracker更新配置：
+    - 1、替换种子的tracker:
+      待替换文本|替换的文本
+    - 2、增加种子的tracker，替换的文本有几个就增加几个tracker
+      待替换文本;替换的文本;替换的文本...
+    - 3、删除种子的tracker，只要写替换的文本
+	  待替换文本
+
