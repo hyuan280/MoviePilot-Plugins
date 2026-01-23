@@ -65,7 +65,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.0.4"
+    plugin_version = "3.0.5"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -82,7 +82,6 @@ class PlayletPolishScrape(_PluginBase):
     _observer = []
     _thread_pool = None
     _medias = {}
-    _is_stoped = False
     _timeline = "00:00:10"
     _transferhis = TransferHistoryOper()
     _storagechain = StorageChain()
@@ -151,6 +150,18 @@ class PlayletPolishScrape(_PluginBase):
             self._onlyonce = config.get("onlyonce")
             self._update = config.get("update")
             self._fixlink = config.get("fixlink")
+            if isinstance(self._interval, str):
+                try:
+                    self._interval = int(self._interval)
+                except Exception as e:
+                    logger.error(f"入库消息延迟配置错误：{self._interval}")
+                    self._interval = 10
+            if isinstance(self._collection_size, str):
+                try:
+                    self._collection_size = int(self._collection_size)
+                except Exception as e:
+                    logger.error(f"认定为合集的文件大小配置错误：{self._collection_size}")
+                    self._collection_size = 300
 
         # 停止现有任务
         self.stop_service()
@@ -332,7 +343,7 @@ class PlayletPolishScrape(_PluginBase):
                 return
             # 遍历目录下所有文件
             for file_path in SystemUtils.list_files(Path(source_dir), settings.RMT_MEDIAEXT):
-                if self._event.is_set() or self._is_stoped:
+                if self._event.is_set():
                     return
 
                 if self.__is_check_pass(str(file_path)):
@@ -350,7 +361,7 @@ class PlayletPolishScrape(_PluginBase):
         :param source_dir: 监控目录
         :param event_path: 事件文件路径
         """
-        if self._event.is_set() or self._is_stoped:
+        if self._event.is_set():
             return
 
         # 回收站的文件不处理
@@ -590,7 +601,20 @@ class PlayletPolishScrape(_PluginBase):
                         )
                     return
 
-                if not StringUtils.is_all_chinese(mediainfo.title):
+                if not mediainfo.title:
+                    logger.error(f"未识别媒体标题")
+                    if self._historysave:
+                        # 新增转移失败历史记录
+                        self._transferhis.add_fail(
+                            fileitem=fileitem,
+                            mode=self._transfer_type,
+                            meta=file_meta,
+                            mediainfo=mediainfo,
+                            transferinfo=None
+                        )
+                    return
+
+                if not StringUtils.is_all_chinese(re.sub(r'^\d+[-.]*', '', mediainfo.title)):
                     file_meta = meta_search_tv_name(file_meta, mediainfo.title)
                     mediainfo.title = file_meta.cn_name
                 file_meta.begin_season = _begin_season # 恢复
@@ -700,8 +724,8 @@ class PlayletPolishScrape(_PluginBase):
                                 )
 
                 except Exception as e:
+                    self._event.set()
                     logger.error(f"{event_path} 刮削失败, 请重新配置运行插件: {e}")
-                    self._is_stoped = True
                     return
 
                 # 查看tv_path路径下是否有jpg文件
@@ -731,8 +755,10 @@ class PlayletPolishScrape(_PluginBase):
                     self._medias[mediainfo.title_year] = media_list
 
             except Exception as e:
+                self._event.set()
+                import traceback
                 logger.error(f"整理过程发生错误: {e}")
-                self._is_stoped = True
+                logger.error(traceback.format_exc())
 
     def __scrape_all_img(self, thumb_path, transferinfo, season: int = 1, scraping_switchs: dict = None):
         '''
@@ -1043,6 +1069,9 @@ class PlayletPolishScrape(_PluginBase):
             result = SystemUtils.execute(cmd)
             if result:
                 logger.warn(f"截取视频缩略图：{video_path}，信息：{result}")
+
+        if self._event.is_set():
+            return False
 
         # 提交任务到线程池
         future = self._thread_pool.submit(_get_thumb_task, video_path, image_path, frames)
@@ -1605,14 +1634,6 @@ class PlayletPolishScrape(_PluginBase):
         """
         退出插件
         """
-
-        if self._thread_pool:
-            try:
-                self._thread_pool.shutdown(wait=True)
-            except Exception as e:
-                logger.error(f"线程池关闭失败：{e}")
-            self._thread_pool = None
-
         if self._observer:
             for observer in self._observer:
                 try:
@@ -1629,6 +1650,15 @@ class PlayletPolishScrape(_PluginBase):
                 self._scheduler.shutdown()
                 self._event.clear()
             self._scheduler = None
+
+        if self._thread_pool:
+            try:
+                self._thread_pool.shutdown(wait=True)
+            except Exception as e:
+                logger.error(f"线程池关闭失败：{e}")
+            self._thread_pool = None
+
+        self._event.clear()
 
 def to_pinyin_with_title(s):
     '''
