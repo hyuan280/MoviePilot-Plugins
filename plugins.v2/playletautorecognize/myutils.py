@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.context import MediaInfo
 from app.log import logger
 from app.utils.http import RequestUtils
+from app.utils.string import StringUtils
 
 
 lock = RLock()
@@ -207,6 +208,34 @@ class PlayletScraper():
     pass
 
 
+def count_name_words(name: str) -> int:
+    """
+    计算中文名中的"单词"数
+    1. 每个中文字符算一个单词
+    2. 连续数字算一个单词
+    3. 连续英文字母算一个单词
+    4. 标点符号忽略
+    :param name: 名称字符串
+    :return 单词数量
+    """
+
+    if not name or not name.strip():
+        return 0
+
+    # 使用正则表达式匹配所有单词单元
+    # [\u4e00-\u9fff]+ : 一个或多个中文字符
+    # \d+              : 一个或多个数字
+    # [a-zA-Z]+        : 一个或多个英文字母
+    pattern = r'[\u4e00-\u9fff]+|\d+|[a-zA-Z]+'
+
+    count = 0
+    matches = re.findall(pattern, name)
+    for matche in matches:
+        if StringUtils.is_chinese(matche):
+            count += len(matche)
+        else:
+            count += 1
+    return count
 
 def chinese_season_to_number(chinese_season) -> int:
     '''

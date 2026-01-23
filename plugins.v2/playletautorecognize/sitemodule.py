@@ -17,7 +17,7 @@ from app.schemas.types import MediaType, ModuleType, MediaRecognizeType
 from app.db.site_oper import SiteOper
 from app.utils.string import StringUtils
 
-from .myutils import get_page_source
+from .myutils import get_page_source, count_name_words
 from .myutils import PlayletCache, PlayletScraper
 
 class SiteApi():
@@ -249,6 +249,23 @@ class SiteApi():
             return self._last_torrent_info[1]
         return None
 
+    @staticmethod
+    def __get_cn_name_from_description(en_name, description: str) -> Optional[str]:
+        """
+        从描述中提取标题
+        """
+        if not en_name or not description:
+            return None
+        titles = re.split(r'[\s/|]+', description)
+
+        if StringUtils.is_chinese(titles[0]):
+            cn_name = titles[0]
+            # 英文名是拼音
+            if count_name_words(cn_name) == count_name_words(en_name):
+                # 中文名和拼音单词数相同，认为是中文名
+                return cn_name
+        return None
+
     def __get_info_form_torrent(self, meta):
         if not self._torrent_dirs:
             return None
@@ -346,6 +363,8 @@ class SiteApi():
                             torrent_info.labels = value_column_value
 
             meta_info = MetaInfo(title=title, subtitle=subtitle)
+            if not meta_info.cn_name:
+                meta_info.cn_name = self.__get_cn_name_from_description(meta_info.en_name, subtitle)
             context = Context(meta_info=meta_info, torrent_info=torrent_info)
 
             logger.debug(f"context={context}")

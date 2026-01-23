@@ -24,7 +24,7 @@ from .myutils import PlayletCache, PlayletScraper
 class TMDBModule(_ModuleBase):
 
     '''
-    红果免费短剧媒体信息匹配
+    TMDB媒体信息匹配
     '''
     # 元数据缓存
     cache: PlayletCache = None
