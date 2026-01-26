@@ -152,5 +152,17 @@
     "history": {
       "v1.0.0": "支持MP配置的下载器批量更新种子tracker"
     }
+  },
+  "UploadTorrent" : {
+    "name": "上传种子文件",
+    "description": "选择下载器，上传本地种子到下载器",
+    "labels": "下载器,种子",
+    "version": "1.0.0",
+    "icon": "upload.png",
+    "author": "hyuan280",
+    "level": 1,
+    "history": {
+      "v1.0.0": "支持上传本地种子文件到对应下载器"
+    }
   }
 }
