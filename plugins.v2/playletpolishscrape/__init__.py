@@ -20,7 +20,7 @@ from watchdog.observers.polling import PollingObserver
 
 from app import schemas
 from app.chain.storage import StorageChain
-from app.chain.media import MediaChain
+from app.chain.media import ScrapingConfig, MediaChain
 from app.core.config import settings
 from app.core.metainfo import MetaInfoPath
 from app.core.event import eventmanager, Event
@@ -29,12 +29,14 @@ from app.helper.directory import DirectoryHelper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import TransferInfo, TransferDirectoryConf
-from app.schemas.types import NotificationType, MediaType, StorageSchema, EventType
+from app.schemas.types import NotificationType, MediaType, StorageSchema, EventType, ScrapingTarget, ScrapingMetadata
 from app.utils.common import retry
 from app.utils.dom import DomUtils
 from app.utils.http import RequestUtils
 from app.utils.system import SystemUtils
 from app.utils.string import StringUtils
+from app.utils.mixins import ConfigReloadMixin
+
 
 
 lock = threading.Lock()
@@ -57,7 +59,7 @@ class FileMonitorHandler(FileSystemEventHandler):
         self.sync.event_handler(event=event, mon_path=self._watch_path, event_path=event.dest_path)
 
 
-class PlayletPolishScrape(_PluginBase):
+class PlayletPolishScrape(_PluginBase, ConfigReloadMixin):
     # 插件名称
     plugin_name = "短剧整理刮削"
     # 插件描述
@@ -65,7 +67,7 @@ class PlayletPolishScrape(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.0.5"
+    plugin_version = "3.1.0"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -85,6 +87,7 @@ class PlayletPolishScrape(_PluginBase):
     _timeline = "00:00:10"
     _transferhis = TransferHistoryOper()
     _storagechain = StorageChain()
+    _scraping_config: ScrapingConfig = ScrapingConfig.from_system_config()
 
     # 错误缓存和计数
     _error_count = 5
@@ -119,6 +122,10 @@ class PlayletPolishScrape(_PluginBase):
     _transferconf: Dict[str, Optional[str]] = {}
     # 退出事件
     _event = threading.Event()
+
+
+    def on_config_changed(self):
+        self._scraping_config = ScrapingConfig.from_system_config()
 
     def init_plugin(self, config: dict = None):
         # 清空配置
@@ -760,39 +767,44 @@ class PlayletPolishScrape(_PluginBase):
                 logger.error(f"整理过程发生错误: {e}")
                 logger.error(traceback.format_exc())
 
-    def __scrape_all_img(self, thumb_path, transferinfo, season: int = 1, scraping_switchs: dict = None):
+    def __scrape_all_img(self, thumb_path, transferinfo, season: int = 1):
         '''
         保存刮削图片
         :param thumb_path: 下载好的缩略图路径
         :param transferinfo: 媒体整理的转移信息
         :param season: 短剧季数
-        :param scraping_switchs: mp的刮削配置开关
         '''
-        if scraping_switchs.get('tv_backdrop'):
+        backdrop_option = self._scraping_config.option(ScrapingTarget.TV, ScrapingMetadata.BACKDROP)
+        if not backdrop_option.is_skip:
             backdrop_path = f"{transferinfo.target_diritem.path}poster.jpg"
-            if not os.path.exists(backdrop_path):
+            if backdrop_option.is_overwrite or not os.path.exists(backdrop_path):
                 logger.debug(f"保存电视剧背景图：{backdrop_path}")
                 self.__save_poster(input_path=thumb_path, poster_path=backdrop_path, cover_conf="2:3")
-        if scraping_switchs.get('tv_thumb') or scraping_switchs.get('tv_poster'):
+        thumb_option = self._scraping_config.option(ScrapingTarget.TV, ScrapingMetadata.THUMB)
+        poster_option = self._scraping_config.option(ScrapingTarget.TV, ScrapingMetadata.POSTER)
+        if not thumb_option.is_skip or not poster_option.is_skip:
             folder_path = f"{transferinfo.target_diritem.path}folder.jpg"
-            if not os.path.exists(folder_path):
+            if thumb_option.is_overwrite or poster_option.is_overwrite or not os.path.exists(folder_path):
                 logger.debug(f"保存电视剧缩略图：{folder_path}")
                 self.__save_poster(input_path=thumb_path, poster_path=folder_path, cover_conf="2:3")
-        if scraping_switchs.get('tv_banner'):
+        banner_option = self._scraping_config.option(ScrapingTarget.TV, ScrapingMetadata.BANNER)
+        if not banner_option.is_skip:
             landscape_path = f"{transferinfo.target_diritem.path}landscape.jpg"
-            if not os.path.exists(landscape_path):
+            if banner_option.is_overwrite or not os.path.exists(landscape_path):
                 logger.debug(f"保存电视剧横幅图：{landscape_path}")
                 self.__save_poster(input_path=thumb_path, poster_path=landscape_path, cover_conf="16:9")
-        if scraping_switchs.get('season_poster'):
+        se_poster_option = self._scraping_config.option(ScrapingTarget.SEASON, ScrapingMetadata.POSTER)
+        if not se_poster_option.is_skip:
             poster_path = f"{transferinfo.target_diritem.path}season{season:02d}-poster.jpg"
-            if not os.path.exists(poster_path):
+            if se_poster_option.is_overwrite or not os.path.exists(poster_path):
                 logger.debug(f"保存季海报：{poster_path}")
                 self.__save_poster(input_path=thumb_path, poster_path=poster_path, cover_conf="2:3")
-        if scraping_switchs.get('episode_thumb'):
+        se_thumb_option = self._scraping_config.option(ScrapingTarget.SEASON, ScrapingMetadata.THUMB)
+        if not se_thumb_option.is_skip:
             episode_video_path = transferinfo.target_item.path
             _episode_video_path = Path(episode_video_path)
             episode_thumb_path = _episode_video_path.with_name(_episode_video_path.stem + "-thumb.jpg")
-            if not os.path.exists(episode_thumb_path):
+            if se_thumb_option.is_overwrite or not os.path.exists(episode_thumb_path):
                 logger.debug(f"保存每集图片：{episode_thumb_path}")
                 self.__get_thumb(episode_video_path, episode_thumb_path)
 
@@ -814,16 +826,18 @@ class PlayletPolishScrape(_PluginBase):
             episode = -1
 
         try:
-            scraping_switchs = MediaChain._get_scraping_switchs()
-            if scraping_switchs.get('tv_nfo'):
-                if not os.path.exists(f"{tv_path}/tvshow.nfo"):
+            tv_option = self._scraping_config.option(ScrapingTarget.TV, ScrapingMetadata.NFO)
+            if not tv_option.is_skip:
+                if tv_option.is_overwrite or not os.path.exists(f"{tv_path}/tvshow.nfo"):
                     tags = mediainfo.tagline.split() if mediainfo.tagline else []
                     self.__gen_tv_nfo_file(Path(tv_path), mediainfo.title, mediainfo.year, mediainfo.overview, mediainfo.release_date, tags, mediainfo.actors)
-            if scraping_switchs.get('season_nfo'):
-                if not os.path.exists(f"{se_path}/season.nfo"):
+            se_option = self._scraping_config.option(ScrapingTarget.SEASON, ScrapingMetadata.NFO)
+            if not se_option.is_skip:
+                if se_option.is_overwrite or not os.path.exists(f"{se_path}/season.nfo"):
                     self.__gen_se_nfo_file(Path(se_path), mediainfo.season, mediainfo.year, mediainfo.overview, mediainfo.release_date, mediainfo.actors)
-            if scraping_switchs.get('episode_nfo') and os.path.isfile(ep_path):
-                if not os.path.exists(f"{se_path}/{name}.nfo"):
+            ep_option = self._scraping_config.option(ScrapingTarget.EPISODE, ScrapingMetadata.NFO)
+            if not ep_option.is_skip and os.path.isfile(ep_path):
+                if ep_option.is_overwrite or not os.path.exists(f"{se_path}/{name}.nfo"):
                     self.__gen_ep_nfo_file(Path(se_path), name, mediainfo.season, episode, mediainfo.year, date=mediainfo.release_date, end_episode=file_meta.end_episode)
         except Exception as e:
             logger.error(f"刮削nfo文件失败：{e}")
@@ -842,11 +856,11 @@ class PlayletPolishScrape(_PluginBase):
             thumb_path = file_path.with_name(file_path.stem + "-site.jpg")
         if thumb_path.exists():
             logger.debug(f"图片已存在/下载：{thumb_path}")
-            self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
+            self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season)
         else:
             try:
                 if self.__save_image(url=mediainfo.poster_path, file_path=thumb_path):
-                    self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season, scraping_switchs)
+                    self.__scrape_all_img(thumb_path, transferinfo, mediainfo.season)
             except RequestException as e:
                 logger.error(f"下载图片失败：{e}")
 
