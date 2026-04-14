@@ -165,5 +165,17 @@
     "history": {
       "v1.0.0": "支持上传本地种子文件到对应下载器"
     }
+  },
+  "RemoveLink" : {
+    "name": "清理硬链接",
+    "description": "监控目录内文件被删除时，同步删除监控目录内所有和它硬链接的文件",
+    "labels": "文件清理",
+    "version": "2.3",
+    "icon": "Ombi_A.png",
+    "author": "DzAvril,hyuan280",
+    "level": 1,
+    "history": {
+      "v2.3": "bug修复，支持清理目录重命名后的历史记录"
+    }
   }
 }
