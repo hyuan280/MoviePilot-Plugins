@@ -177,5 +177,17 @@
     "history": {
       "v2.3": "bug修复，支持清理目录重命名后的历史记录"
     }
+  },
+  "qBAutoClassify" : {
+    "name": "qB下载器自动分类",
+    "description": "qB下载器自动根据现有保存路径和现存分类自动分类并自动管理",
+    "labels": "下载器,种子",
+    "version": "1.0.0",
+    "icon": "Qbittorrent_A.png",
+    "author": "hyuan280",
+    "level": 1,
+    "history": {
+      "v1.0.0": "实现自动根据现有保存路径和现存分类自动分类并自动管理"
+    }
   }
 }
