@@ -39,36 +39,71 @@ class FileMonitorHandler(FileSystemEventHandler):
                 if keyword and keyword in str(file_path):
                     logger.info(f"{file_path} 命中过滤关键字 {keyword}，不处理")
                     return
-        # 新增文件记录
         with state_lock:
             try:
-                self.sync.state_set[str(file_path)] = file_path.stat().st_ino
+                stat = file_path.stat()
+                inode = stat.st_ino
+                nlink = stat.st_nlink
+                path_str = str(file_path)
+                # 检查是否已存在该 inode
+                if inode in self.sync.state_set:
+                    # 已有记录，添加路径（去重）
+                    if path_str not in self.sync.state_set[inode]["path"]:
+                        self.sync.state_set[inode]["path"].append(path_str)
+                    # 更新硬链接数
+                    self.sync.state_set[inode]["num"] = nlink
+                else:
+                    # 新建记录
+                    self.sync.state_set[inode] = {
+                        "path": [path_str],
+                        "num": nlink
+                    }
             except Exception as e:
                 logger.error(f"新增文件记录失败：{str(e)}")
 
     def on_moved(self, event):
         if event.is_directory:
             return
-        file_path = Path(event.dest_path)
-        if file_path.suffix in [".!qB", ".part", ".mp"]:
+        src_path = Path(event.src_path)
+        dest_path = Path(event.dest_path)
+        if dest_path.suffix in [".!qB", ".part", ".mp"]:
             return
-        logger.info(f"监测到新增文件：{file_path}")
+        logger.info(f"文件移动：{src_path} -> {dest_path}")
         if self.sync.exclude_keywords:
             for keyword in self.sync.exclude_keywords.split("\n"):
-                if keyword and keyword in str(file_path):
-                    logger.info(f"{file_path} 命中过滤关键字 {keyword}，不处理")
+                if keyword and keyword in str(dest_path):
+                    logger.info(f"{dest_path} 命中过滤关键字 {keyword}，不处理")
                     return
-        # 新增文件记录
         with state_lock:
-            self.sync.state_set[str(file_path)] = file_path.stat().st_ino
+            # 找到包含 src_path 的条目
+            found_inode = None
+            for inode, info in self.sync.state_set.items():
+                if str(src_path) in info["path"]:
+                    found_inode = inode
+                    break
+            if found_inode is None:
+                # 如果旧路径不在 state_set 中（可能从未记录），当作新增文件处理
+                self.on_created(event)  # 复用 created 逻辑
+                return
+            # 更新路径列表
+            path_list = self.sync.state_set[found_inode]["path"]
+            if str(src_path) in path_list:
+                path_list.remove(str(src_path))
+            if str(dest_path) not in path_list:
+                path_list.append(str(dest_path))
+            # 更新硬链接数（可选）
+            try:
+                self.sync.state_set[found_inode]["num"] = dest_path.stat().st_nlink
+            except Exception as e:
+                logger.error(f"获取移动后文件信息失败：{e}")
 
     def on_deleted(self, event):
         file_path = Path(event.src_path)
         if event.is_directory:
+            logger.info(f"监测到删除文件夹：{file_path}")
             # 单独处理文件夹删除触发删除种子
             if self.sync._delete_torrents:
                 # 发送事件
-                logger.info(f"监测到删除文件夹：{file_path}")
                 eventmanager.send_event(
                     EventType.DownloadFileDeleted, {"src": str(file_path)}
                 )
@@ -132,7 +167,7 @@ class RemoveLink(_PluginBase):
     # 插件图标
     plugin_icon = "Ombi_A.png"
     # 插件版本
-    plugin_version = "2.3"
+    plugin_version = "2.4"
     # 插件作者
     plugin_author = "DzAvril,hyuan280"
     # 作者主页
@@ -645,7 +680,7 @@ class RemoveLink(_PluginBase):
                     logger.info(f"删除硬链接文件：{path}， inode: {deleted_inode}")
                     file.unlink()
                     # 清理刮削文件
-                    self.delete_scrap_infos(path)
+                    self.delete_scrap_infos(file)
                     if self._delete_torrents:
                         # 发送事件
                         eventmanager.send_event(
