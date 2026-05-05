@@ -22,7 +22,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.0.5"
+    plugin_version = "1.1.0"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -45,6 +45,7 @@ class MTeamScrape(_PluginBase):
 
     # 私有属性
     _enabled = False
+    _webon = False
     _site_info = None
     _resource_regulars = ""
     _custom_part = ""
@@ -57,6 +58,7 @@ class MTeamScrape(_PluginBase):
 
         if config:
             self._enabled = config.get("enabled", False)
+            self._webon = config.get("webon", False)
             self._resource_regulars = config.get("resource_regulars", "")
             self._custom_part = config.get("custom_part", "")
 
@@ -371,6 +373,21 @@ class MTeamScrape(_PluginBase):
             logger.error("识别媒体信息时未提供元数据文件名")
             return None
 
+        if self._webon:
+            is_continue = True
+            if meta.customization:
+                keywords = ["Mteam"]
+                for keyword in keywords:
+                    if keyword in meta.customization.split('@'):
+                        is_continue = False
+                        break
+
+            if not is_continue:
+                logger.debug(f"{meta.name} 这是插件发起的识别，跳过")
+                return None
+
+            meta.customization = meta.customization + "@Mteam" if meta.customization else "Mteam"
+
         res_name = meta.org_string
         logger.info(f"使用馒头识别 {res_name}")
 
@@ -379,6 +396,12 @@ class MTeamScrape(_PluginBase):
         logger.debug(f"将搜索下列资源：{reg_matchs}")
 
         for reg_match in reg_matchs:
+            if self._webon and reg_match.get("mode") == "adult":
+                meta.title = reg_match.get("res_name")
+                meta.customization = meta.customization + "@AV" if meta.customization else "AV"
+                other_rec = self.chain.recognize_media(meta=meta, mtype=mtype, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                if other_rec:
+                    return other_rec
             result = self.search(reg_match.get("mode"), reg_match.get("res_name"))
             res_match = self.__parse_res_match(res_name, meta, result)
             if res_match:
@@ -449,6 +472,21 @@ class MTeamScrape(_PluginBase):
             logger.error("识别媒体信息时未提供元数据文件名")
             return None
 
+        if self._webon:
+            is_continue = True
+            if meta.customization:
+                keywords = ["Mteam"]
+                for keyword in keywords:
+                    if keyword in meta.customization.split('@'):
+                        is_continue = False
+                        break
+
+            if not is_continue:
+                logger.debug(f"{meta.name} 这是插件发起的识别，跳过")
+                return None
+
+            meta.customization = meta.customization + "@Mteam" if meta.customization else "Mteam"
+
         res_name = meta.org_string
         logger.info(f"使用馒头识别 {res_name}")
 
@@ -458,6 +496,12 @@ class MTeamScrape(_PluginBase):
 
         mediainfos = []
         for reg_match in reg_matchs:
+            if self._webon and reg_match.get("mode") == "adult":
+                meta.title = reg_match.get("res_name")
+                meta.customization = meta.customization + "@AV" if meta.customization else "AV"
+                other_rec = await self.chain.async_recognize_media(meta=meta, mtype=mtype, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                if other_rec:
+                    return other_rec
             result = await self.async_search(reg_match.get("mode"), reg_match.get("res_name"))
             res_match = self.__parse_res_match(res_name, meta, result)
             if res_match:
@@ -509,6 +553,7 @@ class MTeamScrape(_PluginBase):
         """
         self.update_config({
             "enabled": self._enabled,
+            "webon": self._webon,
             "resource_regulars": self._resource_regulars,
             "custom_part": self._custom_part,
         })
@@ -531,7 +576,7 @@ class MTeamScrape(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 3
+                                    'md': 6
                                 },
                                 'content': [
                                     {
@@ -543,6 +588,22 @@ class MTeamScrape(_PluginBase):
                                     }
                                 ]
                             },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 6
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'webon',
+                                            'label': '使用网站辅助识别，需要安装插件"JAV识别"',
+                                        }
+                                    }
+                                ]
+                            }
                         ],
                     },
                     {
@@ -594,6 +655,7 @@ adult::^(FC2-?PPV-)([0-9]{7,})::2::FC2-PPV-%s::2::PPV-%s'''
             }
         ], {
             "enabled": False,
+            "webon": False,
             "resource_regulars": "",
             "custom_part": ""
         }
