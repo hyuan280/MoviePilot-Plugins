@@ -1,5 +1,6 @@
 import importlib
 import re
+import copy
 from typing import Optional, Any, List, Dict, Tuple
 
 from app.helper.sites import SitesHelper
@@ -22,7 +23,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -118,19 +119,8 @@ class MTeamScrape(_PluginBase):
         return {
             "recognize_media": self.recognize_media,
             "async_recognize_media": self.async_recognize_media,
-            #"obtain_images": self.obtain_images,
             "scheduler_job": self.scheduler_job,
         }
-
-    def obtain_images(self, mediainfo: MediaInfo) -> Optional[MediaInfo]:
-        """
-        补充抓取媒体信息图片
-        :param mediainfo:  识别的媒体信息
-        :return: 更新后的媒体信息
-        """
-        if mediainfo.category == '短剧':
-            return mediainfo
-        return None
 
     def __get_params(self, mode: str, keyword: str, mtype: MediaType = None, page: Optional[int] = 0) -> dict:
         """
@@ -368,7 +358,7 @@ class MTeamScrape(_PluginBase):
         if not meta:
             logger.error("空的meta")
             return None
-        logger.info(f"使用馒头识别 meta={meta}")
+        logger.debug(f"使用馒头识别 meta={meta}")
         if not meta.org_string:
             logger.error("识别媒体信息时未提供元数据文件名")
             return None
@@ -386,7 +376,8 @@ class MTeamScrape(_PluginBase):
                 logger.debug(f"{meta.name} 这是插件发起的识别，跳过")
                 return None
 
-            meta.customization = meta.customization + "@Mteam" if meta.customization else "Mteam"
+            custom_meta = copy.deepcopy(meta)
+            custom_meta.customization = custom_meta.customization + "@Mteam" if custom_meta.customization else "Mteam"
 
         res_name = meta.org_string
         logger.info(f"使用馒头识别 {res_name}")
@@ -397,11 +388,17 @@ class MTeamScrape(_PluginBase):
 
         for reg_match in reg_matchs:
             if self._webon and reg_match.get("mode") == "adult":
-                meta.title = reg_match.get("res_name")
-                meta.customization = meta.customization + "@AV" if meta.customization else "AV"
-                other_rec = self.chain.recognize_media(meta=meta, mtype=mtype, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                custom_meta.title = reg_match.get("res_name")
+                custom_meta.customization = custom_meta.customization + "@AV" if custom_meta.customization else "AV"
+                other_rec = self.chain.recognize_media(meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                # customization 只用来识别，不加入命名
+                custom_meta.customization = None
                 if other_rec:
-                    return other_rec
+                    if reg_match.get("res_name").lower() == other_rec.title.lower():
+                        logger.info(f"其他方式精确识别：{other_rec.title}")
+                        return other_rec
+                    else:
+                        logger.info(f"其他方式未识别，使用Mteam继续")
             result = self.search(reg_match.get("mode"), reg_match.get("res_name"))
             res_match = self.__parse_res_match(res_name, meta, result)
             if res_match:
@@ -468,6 +465,7 @@ class MTeamScrape(_PluginBase):
 
         if not meta:
             return None
+        logger.debug(f"使用馒头识别 meta={meta}")
         if not meta.org_string:
             logger.error("识别媒体信息时未提供元数据文件名")
             return None
@@ -485,7 +483,8 @@ class MTeamScrape(_PluginBase):
                 logger.debug(f"{meta.name} 这是插件发起的识别，跳过")
                 return None
 
-            meta.customization = meta.customization + "@Mteam" if meta.customization else "Mteam"
+            custom_meta = copy.deepcopy(meta)
+            custom_meta.customization = custom_meta.customization + "@Mteam" if custom_meta.customization else "Mteam"
 
         res_name = meta.org_string
         logger.info(f"使用馒头识别 {res_name}")
@@ -497,11 +496,17 @@ class MTeamScrape(_PluginBase):
         mediainfos = []
         for reg_match in reg_matchs:
             if self._webon and reg_match.get("mode") == "adult":
-                meta.title = reg_match.get("res_name")
-                meta.customization = meta.customization + "@AV" if meta.customization else "AV"
-                other_rec = await self.chain.async_recognize_media(meta=meta, mtype=mtype, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                custom_meta.title = reg_match.get("res_name")
+                custom_meta.customization = custom_meta.customization + "@AV" if custom_meta.customization else "AV"
+                other_rec = await self.chain.async_recognize_media(meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                # customization 只用来识别，不加入命名
+                custom_meta.customization = None
                 if other_rec:
-                    return other_rec
+                    if reg_match.get("res_name").lower() == other_rec.title.lower():
+                        logger.info(f"其他方式精确识别：{other_rec.title}")
+                        return other_rec
+                    else:
+                        logger.info(f"其他方式未识别，使用Mteam继续")
             result = await self.async_search(reg_match.get("mode"), reg_match.get("res_name"))
             res_match = self.__parse_res_match(res_name, meta, result)
             if res_match:
