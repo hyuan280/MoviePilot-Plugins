@@ -129,11 +129,12 @@
     "name": "馒头资源刮削",
     "description": "从馒头站点识别资源刮削",
     "labels": "刮削",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "icon": "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png",
     "author": "hyuan280",
     "level": 2,
     "history": {
+      "v1.2.0": "增加刮削图片功能：如果是Mteam图床则插件重新下载图片",
       "v1.1.1": "使用外部网站辅助识别需要精确匹配标题",
       "v1.1.0": "增加使用外部网站辅助识别",
       "v1.0.5": "修复代码错误",

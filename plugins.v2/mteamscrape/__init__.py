@@ -1,19 +1,29 @@
-import importlib
+import os
 import re
 import copy
+from threading import Lock
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Optional, Any, List, Dict, Tuple
 
+from app import schemas
+from app.chain.storage import StorageChain
 from app.helper.sites import SitesHelper
 from app.core.config import settings
 from app.core.meta import MetaBase
+from app.core.event import eventmanager, Event
 from app.core.context import MediaInfo
-from app.modules.themoviedb import TheMovieDbModule
 from app.db.site_oper import SiteOper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.schemas.types import MediaType
+from app.schemas import FileItem
+from app.schemas.types import MediaType, EventType
 
 from app.utils.http import RequestUtils, AsyncRequestUtils
+
+scraping_lock = Lock()
+current_umask = os.umask(0)
+os.umask(current_umask)
 
 class MTeamScrape(_PluginBase):
     # 插件名称
@@ -23,7 +33,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.1.1"
+    plugin_version = "1.2.0"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -37,6 +47,7 @@ class MTeamScrape(_PluginBase):
 
     # 站点属性
     _search_url = "https://api.m-team.cc/api/torrent/search"
+    _images_url = "https://img.m-team.cc/images"
     _movie_category = ['401', '419', '420', '421', '439', '405', '404']
     _tv_category = ['403', '402', '435', '438', '404', '405']
 
@@ -50,7 +61,7 @@ class MTeamScrape(_PluginBase):
     _site_info = None
     _resource_regulars = ""
     _custom_part = ""
-
+    _storagechain = StorageChain()
 
     _res_regs = []
 
@@ -145,16 +156,16 @@ class MTeamScrape(_PluginBase):
         """
         搜索
         """
-        site = SiteOper().get(self._site_info.get("id"))
+        apikey = self._site_info.get("apikey")
         # 检查ApiKey
-        if not site.apikey:
+        if not apikey:
             return []
 
         _proxy = None
-        if site.proxy:
+        if self._site_info.get("proxy"):
             _proxy = settings.PROXY
 
-        ua = site.ua or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0"
+        ua = self._site_info.get("ua") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0"
         params = self.__get_params(mode, keyword, mtype, page)
 
         # 发送请求
@@ -162,11 +173,11 @@ class MTeamScrape(_PluginBase):
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": ua,
-                "x-api-key": site.apikey,
+                "x-api-key": apikey,
             },
             proxies=_proxy,
-            referer=f"{site.domain}browse",
-            timeout=site.timeout or 60
+            referer=f"{self._site_info.get("domain")}browse",
+            timeout=self._site_info.get("timeout") or 60
         ).post_res(url=self._search_url, json=params)
         if res and res.status_code == 200:
             results = res.json().get('data', {}).get("data") or []
@@ -182,16 +193,16 @@ class MTeamScrape(_PluginBase):
         """
         搜索
         """
-        site = SiteOper().get(self._site_info.get("id"))
+        apikey = self._site_info.get("apikey")
         # 检查ApiKey
-        if not site.apikey:
+        if not apikey:
             return []
 
         _proxy = None
-        if site.proxy:
+        if self._site_info.get("proxy"):
             _proxy = settings.PROXY
 
-        ua = site.ua or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0"
+        ua = self._site_info.get("ua") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0"
         params = self.__get_params(mode, keyword, mtype, page)
 
         # 发送请求
@@ -199,11 +210,11 @@ class MTeamScrape(_PluginBase):
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": ua,
-                "x-api-key": site.apikey,
+                "x-api-key": apikey,
             },
             proxies=_proxy,
-            referer=f"{site.domain}/browse",
-            timeout=site.timeout or 60
+            referer=f"{self._site_info.get("domain")}/browse",
+            timeout=self._site_info.get("timeout") or 60
         ).post_res(url=self._search_url, json=params)
         if res and res.status_code == 200:
             results = res.json().get('data', {}).get("data") or []
@@ -250,6 +261,8 @@ class MTeamScrape(_PluginBase):
         if dmmInfo:
             mediainfo.directors = [{ "name": dmmInfo.get("maker") }]
             mediainfo.actors = [{ "name": dmmInfo.get("director"), 'type': 'Director' }]
+            for actress in dmmInfo.get("actressList", []):
+                mediainfo.actors.append({ "name": actress, 'type': 'Actor' })
             tags = [dmmInfo.get("label")] + dmmInfo.get("keywordList")
             mediainfo.tagline = ' '.join(tags) if tags else None
 
@@ -565,6 +578,84 @@ class MTeamScrape(_PluginBase):
 
     def scheduler_job(self):
         logger.info("定时任务...")
+
+    def _download_and_save_image(
+        self, fileitem: schemas.FileItem, path: Path, url: str, referer: str = None
+    ):
+        """
+        流式下载图片并保存到文件
+
+        :param fileitem: 关联的媒体文件项
+        :param path: 图片文件路径
+        :param url: 图片下载URL
+        """
+        if not fileitem or not url or not path:
+            return
+        try:
+            logger.info(f"正在下载图片：{url} ...")
+            request_utils = RequestUtils(
+                proxies=settings.PROXY, ua=settings.NORMAL_USER_AGENT, referer=referer
+            )
+            with request_utils.get_stream(url=url) as r:
+                if r and r.status_code == 200:
+                    # 使用tempfile创建临时文件，自动删除
+                    with NamedTemporaryFile(
+                        delete=True, delete_on_close=False, suffix=path.suffix
+                    ) as tmp_file:
+                        tmp_file_path = Path(tmp_file.name)
+                        # 流式写入文件
+                        for chunk in r.iter_content(chunk_size=8192):
+                            if chunk:
+                                tmp_file.write(chunk)
+                        tmp_file.flush()
+                        tmp_file.close()  # 关闭文件句柄
+
+                        # 刮削的图片只需要读写权限
+                        tmp_file_path.chmod(0o660 & ~current_umask)
+
+                        # 上传文件
+                        item = self._storagechain.upload_file(
+                            fileitem=fileitem, path=tmp_file_path, new_name=path.name
+                        )
+                        if item:
+                            logger.info(f"已保存图片：{item.path}")
+                        else:
+                            logger.warn(f"图片保存失败：{path}")
+                else:
+                    logger.info(f"{url} 图片下载失败")
+        except Exception as err:
+            logger.error(f"{url} 图片下载失败：{str(err)}！")
+
+
+    @eventmanager.register(EventType.MetadataScrape)
+    def scrape_metadata_event(self, event: Event):
+        """
+        监控手动刮削事件
+        """
+        if not event and self.get_state():
+            return
+        event_data = event.event_data or {}
+        # 媒体根目录
+        fileitem: FileItem = event_data.get("fileitem")
+        # 媒体信息
+        mediainfo: MediaInfo = event_data.get("mediainfo")
+
+        # 检查媒体数据
+        if not fileitem or not mediainfo:
+            return
+
+        # 刮削锁
+        with scraping_lock:
+            # 检查是不是本插件识别的
+            if mediainfo.source != 'mteam':
+                return
+            if fileitem.type != 'dir':
+                return
+            image_dict = self.chain.metadata_img(mediainfo=mediainfo)
+            logger.info(f"{image_dict}")
+            for image_name, image_url in image_dict.items():
+                if image_url.startswith(self._images_url):
+                    self._download_and_save_image(fileitem, Path(fileitem.path) / image_name, image_url, self._site_info.get("domain"))
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
