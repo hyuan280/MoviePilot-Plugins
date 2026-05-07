@@ -196,11 +196,12 @@
     "name": "JAV识别",
     "description": "使用公共JAV库识别刮削",
     "labels": "刮削",
-    "version": "1.0",
+    "version": "1.1",
     "icon": "",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.1": "增加对媒体库定时刮削功能",
       "v1.0": "实现从网站Manko.fun识别媒体功能"
     }
   }
