@@ -28,7 +28,7 @@ class FilterSiteTorrent(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -948,7 +948,7 @@ class FilterSiteTorrent(_PluginBase):
                 # 发送通知
                 if self._notify:
                     self.post_message(
-                        mtype=NotificationType.SiteMessage,
+                        mtype=NotificationType.Plugin,
                         title="【筛选站点转移做种任务执行完成】",
                         text=f"下载器 {from_service.name}：总数：{total}，成功：{success}，失败：{fail}，跳过：{skip}，删除重复：{del_dup}"
                     )

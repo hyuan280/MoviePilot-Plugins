@@ -23,7 +23,7 @@ class TrackerUpdate(_PluginBase):
     # 插件图标
     plugin_icon = "trackereditor_A.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -198,7 +198,7 @@ class TrackerUpdate(_PluginBase):
             logger.info("没有配置tracker更新")
             if self._notify:
                 self.post_message(
-                    mtype=NotificationType.SiteMessage,
+                    mtype=NotificationType.Plugin,
                     title="【Tracker更新任务执行完成】",
                     text="没有配置tracker更新")
         logger.debug(f"tracker更新配置：{tracker_edits}")
@@ -241,7 +241,7 @@ class TrackerUpdate(_PluginBase):
                     logger.error(message_text)
                     if self._notify:
                         self.post_message(
-                            mtype=NotificationType.SiteMessage,
+                            mtype=NotificationType.Plugin,
                             title="【Tracker更新任务执行中止】",
                             text=message_text)
                     return
@@ -262,7 +262,7 @@ class TrackerUpdate(_PluginBase):
                             logger.error(message_text)
                             if self._notify:
                                 self.post_message(
-                                    mtype=NotificationType.SiteMessage,
+                                    mtype=NotificationType.Plugin,
                                     title="【Tracker更新任务执行中止】",
                                     text=message_text)
                             return
@@ -277,7 +277,7 @@ class TrackerUpdate(_PluginBase):
         logger.info(message_text)
         if self._notify:
             self.post_message(
-                mtype=NotificationType.SiteMessage,
+                mtype=NotificationType.Plugin,
                 title="【Tracker更新任务执行完成】",
                 text=message_text)
 

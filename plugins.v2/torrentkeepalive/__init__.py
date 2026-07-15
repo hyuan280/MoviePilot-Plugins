@@ -28,7 +28,7 @@ class TorrentKeepAlive(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.6"
+    plugin_version = "1.0.7"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -114,6 +114,8 @@ class TorrentKeepAlive(_PluginBase):
                 self._onlyonce = False
                 config["onlyonce"] = self._onlyonce
                 self.update_config(config=config)
+            else:
+                self.__scheduler_restart_torrent(0)
             # 启动服务
             if self._scheduler.get_jobs():
                 self._scheduler.print_jobs()
@@ -547,7 +549,7 @@ class TorrentKeepAlive(_PluginBase):
                 logger.error(f"下载器 {service.name} 停止种子失败，共 {torrent_cnt} 个种子")
                 if self._notify:
                     self.post_message(
-                        mtype=NotificationType.SiteMessage,
+                        mtype=NotificationType.Plugin,
                         title="【种子保活任务执行失败】",
                         text=f"下载器 {service.name} 停止种子失败，共 {torrent_cnt} 个种子"
                         )
@@ -588,9 +590,9 @@ class TorrentKeepAlive(_PluginBase):
                 message_text += f"下载器 {service.name} 保活失败，共 {len(ids)} 个种子"
 
             self._data_manager.update_torrent_data(downloader_name, data)
-        if self._notify:
+        if self._notify and message_text:
             self.post_message(
-                mtype=NotificationType.SiteMessage,
+                mtype=NotificationType.Plugin,
                 title="【种子保活任务执行完成】",
                 text=message_text)
 

@@ -64,11 +64,12 @@
     "name": "筛选站点转移做种",
     "description": "从其他下载器中选出特定站点的种子到另一个下载器",
     "labels": "种子分类",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "icon": "seed.png",
     "author": "hyuan280",
     "level": 2,
     "history": {
+      "v1.0.3": "通知路径改为插件",
       "v1.0.2": "修复转移不成功BUG",
       "v1.0.1": "修复多下载器错误不继续处理",
       "v1.0.0": "实现从多个下载器中转移某个站点的种子到另一个下载器"
@@ -78,11 +79,12 @@
     "name": "做种保活",
     "description": "定时检查做种状态，重新开始未做种的种子",
     "labels": "下载器检查",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "icon": "seed.png",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.0.7": "通知路径改为插件，保存配置后如果没有立即运行一次就立即开始重新做种任务",
       "v1.0.6": "修复多tracker种子总是被保活，优化数据显示",
       "v1.0.5": "添加保活种子存档文件，并显示保活种子数据",
       "v1.0.4": "优化任务调度",
@@ -149,11 +151,12 @@
     "name": "Tracker批量更新",
     "description": "批量修改种子tracker",
     "labels": "下载器",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "icon": "trackereditor_A.png",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.0.1": "通知路径改为插件",
       "v1.0.0": "支持MP配置的下载器批量更新种子tracker"
     }
   },
