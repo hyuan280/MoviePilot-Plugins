@@ -167,12 +167,12 @@ class HHClubHandler(_ISiteHandler):
 
                     if result["invite_status"]["bonus"] > 0 and result["invite_status"]["permanent_invite_price"] > 0:
                         can_buy_permanent = int(result["invite_status"]["bonus"] / result["invite_status"]["permanent_invite_price"])
-                        if result["invite_status"]["reason"] and not result["invite_status"]["can_invite"]:
-                            if can_buy_permanent > 0:
-                                result["invite_status"]["reason"] += f"，但您的憨豆({result['invite_status']['bonus']})可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}憨豆/个)"
-                                if result["invite_status"]["permanent_count"] == 0:
-                                    result["invite_status"]["can_invite"] = True
-                        elif result["invite_status"]["reason"]:
+						#if result["invite_status"]["reason"] and not result["invite_status"]["can_invite"]:
+							#if can_buy_permanent > 0:
+								#result["invite_status"]["reason"] += f"，但您的憨豆({result['invite_status']['bonus']})可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}憨豆/个)"
+								#if result["invite_status"]["permanent_count"] == 0:
+									#result["invite_status"]["can_invite"] = True
+                        if result["invite_status"]["reason"]:
                             if can_buy_permanent > 0:
                                 result["invite_status"]["reason"] += f"，憨豆({result['invite_status']['bonus']})还可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}憨豆/个)"
             except Exception as e:

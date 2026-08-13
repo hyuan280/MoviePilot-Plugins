@@ -193,10 +193,10 @@ class NexusPhpHandler(_ISiteHandler):
                                     if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
                                         if invite_method: invite_method += ","
                                         invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
-                                    if invite_method:
-                                        result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
-                                        if result["invite_status"]["permanent_count"] == 0 and result["invite_status"]["temporary_count"] == 0:
-                                            result["invite_status"]["can_invite"] = True
+									#if invite_method:
+										#result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
+										#if result["invite_status"]["permanent_count"] == 0 and result["invite_status"]["temporary_count"] == 0:
+											#result["invite_status"]["can_invite"] = True
                             else:
                                 if can_buy_temporary > 0 or can_buy_permanent > 0:
                                     invite_method = ""
