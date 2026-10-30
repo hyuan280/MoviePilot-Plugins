@@ -33,7 +33,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.2.0"
+    plugin_version = "1.2.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -180,8 +180,7 @@ class MTeamScrape(_PluginBase):
             timeout=self._site_info.get("timeout") or 60
         ).post_res(url=self._search_url, json=params)
         if res and res.status_code == 200:
-            results = res.json().get('data', {}).get("data") or []
-            return results
+            return self.__parse_search_response(res, keyword)
         elif res is not None:
             logger.warn(f"搜索 {keyword} 失败，错误码：{res.status_code}")
             return []
@@ -217,14 +216,40 @@ class MTeamScrape(_PluginBase):
             timeout=self._site_info.get("timeout") or 60
         ).post_res(url=self._search_url, json=params)
         if res and res.status_code == 200:
-            results = res.json().get('data', {}).get("data") or []
-            return results
+            return self.__parse_search_response(res, keyword)
         elif res is not None:
             logger.warn(f"搜索 {keyword} 失败，错误码：{res.status_code}")
             return []
         else:
             logger.warn(f"搜索 {keyword} 失败，无法连接网站api")
             return []
+
+    @staticmethod
+    def __parse_search_response(res, keyword: str):
+        """检查业务状态与返回结构，同步、异步搜索共用。"""
+        try:
+            payload = res.json()
+        except ValueError:
+            logger.warn(f"搜索 {keyword} 失败，网站api返回的不是有效JSON")
+            return []
+        if not isinstance(payload, dict):
+            logger.warn(f"搜索 {keyword} 失败，网站api返回格式异常")
+            return []
+        code = payload.get("code")
+        if "code" in payload and code != "SUCCESS":
+            logger.warn(f"搜索 {keyword} 失败，业务错误码：{code}，信息：{payload.get('message')}")
+            return []
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            logger.warn(f"搜索 {keyword} 失败，网站api返回data为空或格式异常，信息：{payload.get('message')}")
+            return []
+        results = data.get("data")
+        if results is None:
+            return []
+        if not isinstance(results, list):
+            logger.warn(f"搜索 {keyword} 失败，网站api返回的搜索结果不是列表")
+            return []
+        return results
 
     def __parse_mediainfo(self, meta: MetaBase, data: dict):
 
@@ -402,10 +427,11 @@ class MTeamScrape(_PluginBase):
         for reg_match in reg_matchs:
             if self._webon and reg_match.get("mode") == "adult":
                 custom_meta.title = reg_match.get("res_name")
-                custom_meta.customization = custom_meta.customization + "@AV" if custom_meta.customization else "AV"
+                # 副本跨匹配项复用，保留 Mteam 防重入标记且不重复添加 AV。
+                if "AV" not in custom_meta.customization.split('@'):
+                    custom_meta.customization += "@AV"
                 other_rec = self.chain.recognize_media(meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
-                # customization 只用来识别，不加入命名
-                custom_meta.customization = None
+                # 仅修改辅助识别副本，原始 meta 的命名占位符不受影响。
                 if other_rec:
                     if reg_match.get("res_name").lower() == other_rec.title.lower():
                         logger.info(f"其他方式精确识别：{other_rec.title}")
@@ -510,10 +536,11 @@ class MTeamScrape(_PluginBase):
         for reg_match in reg_matchs:
             if self._webon and reg_match.get("mode") == "adult":
                 custom_meta.title = reg_match.get("res_name")
-                custom_meta.customization = custom_meta.customization + "@AV" if custom_meta.customization else "AV"
+                # 副本跨匹配项复用，保留 Mteam 防重入标记且不重复添加 AV。
+                if "AV" not in custom_meta.customization.split('@'):
+                    custom_meta.customization += "@AV"
                 other_rec = await self.chain.async_recognize_media(meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
-                # customization 只用来识别，不加入命名
-                custom_meta.customization = None
+                # 仅修改辅助识别副本，原始 meta 的命名占位符不受影响。
                 if other_rec:
                     if reg_match.get("res_name").lower() == other_rec.title.lower():
                         logger.info(f"其他方式精确识别：{other_rec.title}")
