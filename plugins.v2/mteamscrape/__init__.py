@@ -33,7 +33,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.2.1"
+    plugin_version = "1.2.2"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -46,7 +46,7 @@ class MTeamScrape(_PluginBase):
     auth_level = 2
 
     # 站点属性
-    _search_url = "https://api.m-team.cc/api/torrent/search"
+    _search_url = "https://api2.m-team.cc/api/torrent/search"
     _images_url = "https://img.m-team.cc/images"
     _movie_category = ['401', '419', '420', '421', '439', '405', '404']
     _tv_category = ['403', '402', '435', '438', '404', '405']
@@ -236,7 +236,7 @@ class MTeamScrape(_PluginBase):
             logger.warn(f"搜索 {keyword} 失败，网站api返回格式异常")
             return []
         code = payload.get("code")
-        if "code" in payload and code != "SUCCESS":
+        if "code" in payload and code != '0':
             logger.warn(f"搜索 {keyword} 失败，业务错误码：{code}，信息：{payload.get('message')}")
             return []
         data = payload.get("data")
