@@ -67,7 +67,7 @@ class PlayletPolishScrape(_PluginBase, ConfigReloadMixin):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "3.1.0"
+    plugin_version = "3.1.1"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -818,6 +818,12 @@ class PlayletPolishScrape(_PluginBase, ConfigReloadMixin):
         tv_path = transferinfo.target_diritem.path
         ep_path = transferinfo.target_item.path
         se_path = os.path.dirname(ep_path)
+        # MoviePilot v3 的 target_diritem 指向文件所在目录（如 Season 1），v2 指向媒体根目录；
+        # 命中季目录时上移一级，恢复剧集根目录语义，避免 tvshow.nfo/剧集海报写进季目录
+        if re.fullmatch(r'(?i)(season|s)\s*0*\d+|specials|sps', Path(tv_path).name):
+            tv_path = str(Path(tv_path).parent)
+            # 目录项路径保留结尾斜杠：__scrape_all_img 直接做字符串拼接
+            transferinfo.target_diritem.path = f"{tv_path}/"
         name = transferinfo.target_item.basename
         match = re.search(r'S(\d{2})E(\d{2,})', name)
         if match:
