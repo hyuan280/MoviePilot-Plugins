@@ -14,6 +14,31 @@ from .hongguomodule import HongGuoModule
 from .sitemodule import SiteModule
 from .myutils import merge_mediainfo
 
+# V3 宿主用 media_source/media_id 表达媒体主身份，V2 宿主仍是 tmdbid/doubanid/bangumiid。
+# 这里统一还原成插件内部使用的旧 ID 参数，让同一份实现同时兼容 V2/V3 宿主。
+_IDENTITY_SOURCES = {
+    "themoviedb": "tmdbid",
+    "douban": "doubanid",
+    "bangumi": "bangumiid",
+}
+
+
+def _legacy_ids(media_source: Any, media_id: Any) -> Tuple[Optional[int], Optional[str], Optional[int]]:
+    """把 V3 主身份还原为 (tmdbid, doubanid, bangumiid)，无效时全部返回 None。"""
+    value = str(media_id) if media_id not in (None, "", "0") else None
+    source = getattr(media_source, "value", media_source)
+    field = _IDENTITY_SOURCES.get(str(source)) if source else None
+    if not value or not field:
+        return None, None, None
+    try:
+        if field == "tmdbid":
+            return int(value), None, None
+        if field == "bangumiid":
+            return None, None, int(value)
+    except (TypeError, ValueError):
+        return None, None, None
+    return None, value, None
+
 
 class PlayletAutoRecognize(_PluginBase):
     # 插件名称
@@ -23,7 +48,7 @@ class PlayletAutoRecognize(_PluginBase):
     # 插件图标
     plugin_icon = "Amule_B.png"
     # 插件版本
-    plugin_version = "1.4.3"
+    plugin_version = "1.4.4"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -145,7 +170,10 @@ class PlayletAutoRecognize(_PluginBase):
                         doubanid: Optional[str] = None,
                         bangumiid: Optional[int] = None,
                         episode_group: Optional[str] = None,
-                        cache: bool = True) -> Optional[MediaInfo]:
+                        cache: bool = True,
+                        media_source: Any = None,
+                        media_id: Optional[str] = None,
+                        **kwargs) -> Optional[MediaInfo]:
         """
         识别媒体信息，不含Fanart图片
         :param meta:     识别的元数据
@@ -155,8 +183,13 @@ class PlayletAutoRecognize(_PluginBase):
         :param bangumiid: BangumiID
         :param episode_group: 剧集组
         :param cache:    是否使用缓存
+        :param media_source: V3 宿主传入的媒体数据源，与 media_id 成对出现
+        :param media_id: V3 宿主传入的数据源原生 ID
         :return: 识别的媒体信息，包括剧集信息
         """
+        # V3 宿主按 media_source/media_id 传主身份，这里还原为内部的旧 ID 参数
+        if media_source or media_id:
+            tmdbid, doubanid, bangumiid = _legacy_ids(media_source, media_id)
         if not meta:
             return None
         if not meta.name:

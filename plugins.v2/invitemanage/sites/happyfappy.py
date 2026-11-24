@@ -15,7 +15,7 @@ from app.db.site_oper import SiteOper
 from app.log import logger
 
 
-from plugins.invitemanage.sites import _ISiteHandler
+from app.plugins.invitemanage.sites import _ISiteHandler
 
 
 class HappyFappyHandler(_ISiteHandler):

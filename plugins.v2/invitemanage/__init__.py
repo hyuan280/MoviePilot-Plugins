@@ -27,9 +27,9 @@ from app.modules.indexer.parser import SiteSchema
 from app.db.site_oper import SiteOper
 from app.helper.sites import SitesHelper
 
-from plugins.invitemanage.data import DataManager
-from plugins.invitemanage.utils import NotificationHelper, SiteHelper
-from plugins.invitemanage.module_loader import ModuleLoader
+from app.plugins.invitemanage.data import DataManager
+from app.plugins.invitemanage.utils import NotificationHelper, SiteHelper
+from app.plugins.invitemanage.module_loader import ModuleLoader
 
 class Prescription():
     def __init__(self):
@@ -358,7 +358,7 @@ class InviteManage(_PluginBase):
     # 插件图标
     plugin_icon = ""
     # 插件版本
-    plugin_version = "1.0.10"
+    plugin_version = "1.0.11"
     # 插件作者
     plugin_author = "hyuan280,madrays"
     # 作者主页
@@ -497,7 +497,7 @@ class InviteManage(_PluginBase):
             # 1. 清理模块缓存 - 从sys.modules中删除相关模块
             modules_to_reload = []
             for module_name in list(sys.modules.keys()):
-                if module_name.startswith('plugins.invitemanage.') and module_name != 'plugins.invitemanage':
+                if module_name.startswith('app.plugins.invitemanage.') and module_name != 'app.plugins.invitemanage':
                     modules_to_reload.append(module_name)
                     # 从sys.modules中删除模块以强制重新导入
                     del sys.modules[module_name]
@@ -505,17 +505,17 @@ class InviteManage(_PluginBase):
 
             # 2. 重新导入核心模块
             logger.debug("重新导入核心模块...")
-            importlib.import_module('plugins.invitemanage.data')
-            importlib.import_module('plugins.invitemanage.utils')
-            importlib.import_module('plugins.invitemanage.module_loader')
+            importlib.import_module('app.plugins.invitemanage.data')
+            importlib.import_module('app.plugins.invitemanage.utils')
+            importlib.import_module('app.plugins.invitemanage.module_loader')
 
             # 3. 更新全局引用以确保使用的是最新版本
             logger.debug("更新全局模块引用...")
             global DataManager, NotificationHelper, ModuleLoader
             try:
-                from plugins.invitemanage.data import DataManager
-                from plugins.invitemanage.utils import NotificationHelper
-                from plugins.invitemanage.module_loader import ModuleLoader
+                from app.plugins.invitemanage.data import DataManager
+                from app.plugins.invitemanage.utils import NotificationHelper
+                from app.plugins.invitemanage.module_loader import ModuleLoader
                 logger.debug("核心模块引用更新成功")
             except Exception as e:
                 logger.error(f"更新核心模块引用失败: {str(e)}")

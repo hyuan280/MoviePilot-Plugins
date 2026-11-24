@@ -7,7 +7,7 @@ import inspect
 from typing import List, Type, Dict, Any
 
 from app.log import logger
-from plugins.invitemanage.sites import _ISiteHandler
+from app.plugins.invitemanage.sites import _ISiteHandler
 
 
 class ModuleLoader:
@@ -37,7 +37,7 @@ class ModuleLoader:
             
             try:
                 # 动态导入模块
-                module = importlib.import_module(f"plugins.invitemanage.sites.{module_name}")
+                module = importlib.import_module(f"app.plugins.invitemanage.sites.{module_name}")
                 
                 # 查找模块中继承了_ISiteHandler的类
                 for name, obj in inspect.getmembers(module):

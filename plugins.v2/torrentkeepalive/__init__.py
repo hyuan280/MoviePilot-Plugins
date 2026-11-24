@@ -18,7 +18,7 @@ from app.plugins import _PluginBase
 from app.schemas import NotificationType, ServiceInfo
 from app.utils.string import StringUtils
 
-from plugins.torrentkeepalive.data import DataManager
+from app.plugins.torrentkeepalive.data import DataManager
 
 class TorrentKeepAlive(_PluginBase):
     # 插件名称
@@ -28,7 +28,7 @@ class TorrentKeepAlive(_PluginBase):
     # 插件图标
     plugin_icon = "seed.png"
     # 插件版本
-    plugin_version = "1.0.7"
+    plugin_version = "1.0.8"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页

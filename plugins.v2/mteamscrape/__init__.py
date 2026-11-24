@@ -1,6 +1,7 @@
 import os
 import re
 import copy
+import inspect
 from threading import Lock
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -25,6 +26,32 @@ scraping_lock = Lock()
 current_umask = os.umask(0)
 os.umask(current_umask)
 
+# V3 宿主用 media_source/media_id 表达媒体主身份，V2 宿主仍是 tmdbid/doubanid/bangumiid。
+# 这里统一还原成插件内部使用的旧 ID 参数，让同一份实现同时兼容 V2/V3 宿主。
+_IDENTITY_SOURCES = {
+    "themoviedb": "tmdbid",
+    "douban": "doubanid",
+    "bangumi": "bangumiid",
+}
+
+
+def _legacy_ids(media_source: Any, media_id: Any) -> Tuple[Optional[int], Optional[str], Optional[int]]:
+    """把 V3 主身份还原为 (tmdbid, doubanid, bangumiid)，无效时全部返回 None。"""
+    value = str(media_id) if media_id not in (None, "", "0") else None
+    source = getattr(media_source, "value", media_source)
+    field = _IDENTITY_SOURCES.get(str(source)) if source else None
+    if not value or not field:
+        return None, None, None
+    try:
+        if field == "tmdbid":
+            return int(value), None, None
+        if field == "bangumiid":
+            return None, None, int(value)
+    except (TypeError, ValueError):
+        return None, None, None
+    return None, value, None
+
+
 class MTeamScrape(_PluginBase):
     # 插件名称
     plugin_name = "馒头资源刮削"
@@ -33,7 +60,7 @@ class MTeamScrape(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/hyuan280/MoviePilot-Plugins/main/icons/MTeam.png"
     # 插件版本
-    plugin_version = "1.2.2"
+    plugin_version = "1.2.3"
     # 插件作者
     plugin_author = "hyuan280"
     # 作者主页
@@ -375,13 +402,45 @@ class MTeamScrape(_PluginBase):
 
         return reg_matchs
 
+    @staticmethod
+    def _identity_kwargs(func, tmdbid, doubanid, bangumiid, media_source, media_id) -> Dict[str, Any]:
+        """按宿主代际选择媒体身份参数：V3 用 media_source/media_id，V2 用旧 ID。"""
+        try:
+            parameters = inspect.signature(func).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "media_source" in parameters:
+            if media_source and media_id:
+                return {"media_source": media_source, "media_id": media_id}
+            return {}
+        return {"tmdbid": tmdbid, "doubanid": doubanid, "bangumiid": bangumiid}
+
+    def _chain_recognize(self, meta, mtype, tmdbid, doubanid, bangumiid,
+                         media_source, media_id, episode_group, cache) -> Optional[MediaInfo]:
+        """辅助识别，兼容 V2/V3 链方法的身份参数。"""
+        identity = self._identity_kwargs(
+            self.chain.recognize_media, tmdbid, doubanid, bangumiid, media_source, media_id)
+        return self.chain.recognize_media(
+            meta=meta, mtype=mtype, episode_group=episode_group, cache=cache, **identity)
+
+    async def _async_chain_recognize(self, meta, mtype, tmdbid, doubanid, bangumiid,
+                                     media_source, media_id, episode_group, cache) -> Optional[MediaInfo]:
+        """辅助识别异步版，兼容 V2/V3 链方法的身份参数。"""
+        identity = self._identity_kwargs(
+            self.chain.async_recognize_media, tmdbid, doubanid, bangumiid, media_source, media_id)
+        return await self.chain.async_recognize_media(
+            meta=meta, mtype=mtype, episode_group=episode_group, cache=cache, **identity)
+
     def recognize_media(self, meta: MetaBase = None,
                         mtype: Optional[MediaType] = None,
                         tmdbid: Optional[int] = None,
                         doubanid: Optional[str] = None,
                         bangumiid: Optional[int] = None,
                         episode_group: Optional[str] = None,
-                        cache: bool = True) -> Optional[MediaInfo]:
+                        cache: bool = True,
+                        media_source: Any = None,
+                        media_id: Optional[str] = None,
+                        **kwargs) -> Optional[MediaInfo]:
         """
         识别媒体信息，不含Fanart图片
         :param meta:     识别的元数据
@@ -391,8 +450,13 @@ class MTeamScrape(_PluginBase):
         :param bangumiid: BangumiID
         :param episode_group: 剧集组
         :param cache:    是否使用缓存
+        :param media_source: V3 宿主传入的媒体数据源，与 media_id 成对出现
+        :param media_id: V3 宿主传入的数据源原生 ID
         :return: 识别的媒体信息，包括剧集信息
         """
+        # V3 宿主按 media_source/media_id 传主身份，这里还原为内部的旧 ID 参数
+        if media_source or media_id:
+            tmdbid, doubanid, bangumiid = _legacy_ids(media_source, media_id)
         if not meta:
             logger.error("空的meta")
             return None
@@ -430,7 +494,10 @@ class MTeamScrape(_PluginBase):
                 # 副本跨匹配项复用，保留 Mteam 防重入标记且不重复添加 AV。
                 if "AV" not in custom_meta.customization.split('@'):
                     custom_meta.customization += "@AV"
-                other_rec = self.chain.recognize_media(meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                other_rec = self._chain_recognize(
+                    meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid,
+                    doubanid=doubanid, bangumiid=bangumiid, media_source=media_source,
+                    media_id=media_id, episode_group=episode_group, cache=cache)
                 # 仅修改辅助识别副本，原始 meta 的命名占位符不受影响。
                 if other_rec:
                     if reg_match.get("res_name").lower() == other_rec.title.lower():
@@ -489,7 +556,10 @@ class MTeamScrape(_PluginBase):
                         doubanid: Optional[str] = None,
                         bangumiid: Optional[int] = None,
                         episode_group: Optional[str] = None,
-                        cache: bool = True) -> Optional[MediaInfo]:
+                        cache: bool = True,
+                        media_source: Any = None,
+                        media_id: Optional[str] = None,
+                        **kwargs) -> Optional[MediaInfo]:
         """
         识别媒体信息，不含Fanart图片(异步版本)
         :param meta:     识别的元数据
@@ -499,8 +569,13 @@ class MTeamScrape(_PluginBase):
         :param bangumiid: BangumiID
         :param episode_group: 剧集组
         :param cache:    是否使用缓存
+        :param media_source: V3 宿主传入的媒体数据源，与 media_id 成对出现
+        :param media_id: V3 宿主传入的数据源原生 ID
         :return: 识别的媒体信息，包括剧集信息
         """
+        # V3 宿主按 media_source/media_id 传主身份，这里还原为内部的旧 ID 参数
+        if media_source or media_id:
+            tmdbid, doubanid, bangumiid = _legacy_ids(media_source, media_id)
 
         if not meta:
             return None
@@ -539,7 +614,10 @@ class MTeamScrape(_PluginBase):
                 # 副本跨匹配项复用，保留 Mteam 防重入标记且不重复添加 AV。
                 if "AV" not in custom_meta.customization.split('@'):
                     custom_meta.customization += "@AV"
-                other_rec = await self.chain.async_recognize_media(meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid, doubanid=doubanid, bangumiid=bangumiid, episode_group=episode_group, cache=cache)
+                other_rec = await self._async_chain_recognize(
+                    meta=custom_meta, mtype=MediaType.MOVIE, tmdbid=tmdbid,
+                    doubanid=doubanid, bangumiid=bangumiid, media_source=media_source,
+                    media_id=media_id, episode_group=episode_group, cache=cache)
                 # 仅修改辅助识别副本，原始 meta 的命名占位符不受影响。
                 if other_rec:
                     if reg_match.get("res_name").lower() == other_rec.title.lower():

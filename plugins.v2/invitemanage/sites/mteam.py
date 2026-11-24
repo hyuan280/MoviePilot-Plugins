@@ -11,7 +11,7 @@ from app.modules.indexer.parser import SiteSchema
 from app.utils.string import StringUtils
 from app.log import logger
 
-from plugins.invitemanage.sites import _ISiteHandler
+from app.plugins.invitemanage.sites import _ISiteHandler
 
 
 class MTeamHandler(_ISiteHandler):
