@@ -2,6 +2,7 @@ import re
 import requests
 import datetime
 import subprocess
+import copy
 
 from typing import Optional, Tuple, Union
 from pathlib import Path
@@ -408,10 +409,13 @@ class SiteApi():
             img_url = str(images[0])
         logger.info(f"获取到种子封面图 {img_url}")
 
-        brief_text = brief_texts[0].xpath("string()").strip()
+        node = copy.deepcopy(brief_texts[0])
+        for fs in node.xpath('.//fieldset'):
+            fs.getparent().remove(fs)
+        brief_text = node.xpath("string()").strip()
         brief = None
         if brief_text and len(brief_text) > 5:
-            brief_match = re.search(r'简\s*介\s*[：: ]?([^◎]*)', brief_text)
+            brief_match = re.search(r'简\s*介\s*[：: ]?([^◎]*)', brief_text, re.S)
             if brief_match:
                 brief = brief_match.group(1).strip()
             else:

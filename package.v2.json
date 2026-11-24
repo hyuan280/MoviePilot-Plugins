@@ -41,11 +41,12 @@
     "name": "短剧自动识别",
     "description": "从TMDB、网站和站点识别短剧",
     "labels": "文件整理",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "icon": "Amule_B.png",
     "author": "hyuan280",
     "level": 1,
     "history": {
+      "v1.4.5": "优化从站点获取简介时带入不必要的引用字段",
       "v1.4.4": "兼容V3宿主：识别端口支持media_source/media_id",
       "v1.4.3": "修复标题带数字的中文名不识别问题",
       "v1.4.2": "修复mp更新后settings.CONF的变化导致的代码错误",
